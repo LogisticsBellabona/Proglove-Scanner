@@ -73,20 +73,20 @@ function nowISO() { return (new Date()).toISOString(); }
 function todayDateStr() { return (new Date()).toLocaleDateString('en-GB'); }
 
 // ------------------- STORAGE -------------------
-function saveToLocal() {
-    try {
-        var toSave = {
-            activeBowls: window.appData.activeBowls,
-            preparedBowls: window.appData.preparedBowls,
-            returnedBowls: window.appData.returnedBowls,
-            myScans: window.appData.myScans,
-            scanHistory: window.appData.scanHistory,
-            customerData: window.appData.customerData,
-            lastSync: window.appData.lastSync
-        };
-        localStorage.setItem('proglove_data_v1', JSON.stringify(toSave));
-    } catch(e){ console.error("saveToLocal:", e) }
-}
+// function saveToLocal(); local storage disabled — cloud only {
+//     try {
+//         var toSave = {
+//             activeBowls: window.appData.activeBowls,
+//             preparedBowls: window.appData.preparedBowls,
+//             returnedBowls: window.appData.returnedBowls,
+//             myScans: window.appData.myScans,
+//             scanHistory: window.appData.scanHistory,
+//             customerData: window.appData.customerData,
+//             lastSync: window.appData.lastSync
+//         };
+//         localStorage.setItem('proglove_data_v1', JSON.stringify(toSave));
+//     } catch(e){ console.error("saveToLocal(); local storage disabled — cloud only:", e) }
+// }
 
 function loadFromLocal() {
     try {
@@ -109,7 +109,7 @@ function initFirebaseAndStart() {
         if (typeof firebase === "undefined") {
             console.error("❌ Firebase SDK not loaded — check script includes.");
             updateSystemStatus(false, "Firebase SDK missing");
-            loadFromLocal();
+            saveToLocal(); // local storage disabled — cloud only;
             initializeUI();
             return;
         }
@@ -131,7 +131,7 @@ function initFirebaseAndStart() {
     } catch (e) {
         console.error("❌ initFirebaseAndStart error:", e);
         updateSystemStatus(false, "Firebase init failed — using local data");
-        loadFromLocal();
+        saveToLocal(); // local storage disabled — cloud only;
         initializeUI();
     }
 }
@@ -199,59 +199,51 @@ function loadFromFirebase() {
                 window.appData.scanHistory = val.scanHistory || window.appData.scanHistory || [];
                 window.appData.customerData = val.customerData || window.appData.customerData || [];
                 window.appData.lastSync = nowISO();
-                saveToLocal();
+                saveToLocal(); // local storage disabled — cloud only;
                 updateSystemStatus(true);
                 showMessage('✅ Cloud data loaded', 'success');
             } else {
                 // no cloud data
                 updateSystemStatus(true, '✅ Cloud Connected (no data)');
-                loadFromLocal();
+                saveToLocal(); // local storage disabled — cloud only;
             }
             initializeUI();
         }).catch(function(err){
             console.error("Firebase read failed:", err);
             updateSystemStatus(false, '⚠️ Cloud load failed');
-            loadFromLocal();
+            saveToLocal(); // local storage disabled — cloud only;
             initializeUI();
         });
     } catch (e) {
         console.error("loadFromFirebase error:", e);
         updateSystemStatus(false, '⚠️ Firebase error');
-        loadFromLocal();
+       saveToLocal(); // local storage disabled — cloud only;
         initializeUI();
     }
 }
 
 function syncToFirebase() {
-    try {
-        if (typeof firebase === 'undefined') {
-            saveToLocal();
-            showMessage('⚠️ Offline - saved locally', 'warning');
-            return;
-        }
-        var db = firebase.database();
-        var payload = {
-            activeBowls: window.appData.activeBowls || [],
-            preparedBowls: window.appData.preparedBowls || [],
-            returnedBowls: window.appData.returnedBowls || [],
-            myScans: window.appData.myScans || [],
-            scanHistory: window.appData.scanHistory || [],
-            customerData: window.appData.customerData || [],
-            lastSync: nowISO()
-        };
-        // ✅ use update() instead of set() to preserve existing data
-        db.ref('progloveData').update(payload)
-          .then(() => {
-              showMessage('✅ Synced to cloud', 'success');
-          })
-          .catch(err => {
-              console.error('Firebase sync failed:', err);
-              showMessage('⚠️ Sync failed', 'error');
-          });
-    } catch (e) {
-        console.error("syncToFirebase error:", e);
-        showMessage('⚠️ Firebase error', 'error');
-    }
+  try {
+    if (typeof firebase === 'undefined') return;
+
+    const db = firebase.database();
+    const payload = {
+      activeBowls: window.appData.activeBowls || [],
+      preparedBowls: window.appData.preparedBowls || [],
+      returnedBowls: window.appData.returnedBowls || [],
+      myScans: window.appData.myScans || [],
+      scanHistory: window.appData.scanHistory || [],
+      customerData: window.appData.customerData || [],
+      lastSync: nowISO()
+    };
+
+    db.ref('progloveData')
+      .update(payload)
+      .then(() => console.log("✅ Auto-synced to Firebase"))
+      .catch(err => console.error("❌ Sync error:", err));
+  } catch (e) {
+    console.error("syncToFirebase error:", e);
+  }
 }
 
 // ------------------- SCAN HANDLING (CLEAN) -------------------
@@ -1029,7 +1021,7 @@ window.processJSONData = function () {
         });
 
         // persist and update UI
-        saveToLocal();
+       saveToLocal(); // local storage disabled — cloud only;
         syncToFirebase();
         updateDisplay();
         updateOvernightStats();
@@ -1091,7 +1083,7 @@ document.addEventListener('DOMContentLoaded', function(){
         initFirebaseAndStart();
     } catch(e){
         console.error("startup error:", e);
-        loadFromLocal();
+        saveToLocal(); // local storage disabled — cloud only;
         initializeUI();
     }
 });
