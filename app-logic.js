@@ -27,7 +27,7 @@ window.appData = {
 
 // Small user list (keeps parity with your source)
 const USERS = [
-    {name: "Hamid", role: "Kitchen"},
+    {name: "Ivan", role: "Kitchen"},
     {name: "Richa", role: "Kitchen"},
     {name: "Jash", role: "Kitchen"},
     {name: "Joes", role: "Kitchen"},
