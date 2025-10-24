@@ -38,7 +38,7 @@ const USERS = [
 
 // Firebase config (keeps your existing project)
 // ------------------- FIREBASE CONFIG -------------------
-var firebaseConfig = {
+const firebaseConfig = {
   apiKey: "AIzaSyDya1dDRSeQmuKnpraSoSoTjauLlJ_J94I",
   authDomain: "proglove-bowl-tracker.firebaseapp.com",
   databaseURL: "https://proglove-bowl-tracker-default-rtdb.europe-west1.firebasedatabase.app",
