@@ -36,12 +36,13 @@ const USERS = [
     {name: "Adesh", role: "Return"}
 ];
 
-// Firebase config (keeps your existing project)
+// Firebase config (fixed)
 var firebaseConfig = {
   apiKey: "AIzaSyDya1dDRSeQmuKnpraSoSoTjauLlJ_J94I",
   authDomain: "proglove-bowl-tracker.firebaseapp.com",
+  databaseURL: "https://proglove-bowl-tracker-default-rtdb.firebaseio.com",
   projectId: "proglove-bowl-tracker",
-  storageBucket: "proglove-bowl-tracker.firebasestorage.app",
+  storageBucket: "proglove-bowl-tracker.appspot.com",
   messagingSenderId: "280001054969",
   appId: "1:280001054969:web:a0792a228ea2f1c5c9ba28"
 };
@@ -803,7 +804,7 @@ window.exportAllData = async function () {
     }
 };
 // ------------------- JSON PATCH PROCESSING (UPDATED) -------------------
-window.processJSONData = function processDeliveryJSON(raw) {
+window.processJSONData = function processJSONData(raw) {
     try {
         let parsed = (typeof raw === 'string') ? JSON.parse(raw) : raw;
  
