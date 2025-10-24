@@ -38,13 +38,13 @@ const USERS = [
 
 // Firebase config (keeps your existing project)
 var firebaseConfig = {
-    apiKey: "AIzaSyCL3hffCHosBceIRGR1it2dYEDb3uxIrJw",
-    authDomain: "proglove-scanner.firebaseapp.com",
-    databaseURL: "https://proglove-scanner-default-rtdb.europe-west1.firebasedatabase.app",
-    projectId: "proglove-scanner",
-    storageBucket: "proglove-scanner.firebasestorage.app",
-    messagingSenderId: "177575768177",
-    appId: "1:177575768177:web:0a0acbf222218e0c0b2bd0"
+  apiKey: "AIzaSyCL3hffCHosBceIRGR1it2dYEDb3uxIrJw",
+  authDomain: "proglove-scanner.firebaseapp.com",
+  databaseURL: "https://proglove-scanner-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "proglove-scanner",
+  storageBucket: "proglove-scanner.firebasestorage.app",
+  messagingSenderId: "177575768177",
+  appId: "1:177575768177:web:0a0acbf222218e0c0b2bd0"
 };
 
 // ------------------- UTILITIES -------------------
