@@ -803,6 +803,7 @@ window.exportAllData = async function () {
         showMessage("❌ Excel export failed. Check console for details.", "error");
     }
 };
+
 // ------------------- JSON PATCH PROCESSING (UPDATED) -------------------
 window.processJSONData = function processJSONData(raw) {
   try {
@@ -814,36 +815,30 @@ window.processJSONData = function processJSONData(raw) {
 
     let parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
 
-    // Normalize structure: find array of boxes or deliveries
+    if (!parsed) {
+      showMessage("❌ Empty or invalid JSON object.", "error");
+      return;
+    }
+
     let boxes = [];
     if (Array.isArray(parsed)) boxes = parsed;
     else if (parsed.boxes && Array.isArray(parsed.boxes)) boxes = parsed.boxes;
     else if (parsed.deliveries && Array.isArray(parsed.deliveries)) boxes = parsed.deliveries;
     else boxes = [parsed];
 
-    console.log("Parsed boxes:", boxes);
+    console.log("✅ Parsed boxes:", boxes);
 
+    // continue with your save and sync logic...
     saveToLocal();
     syncToFirebase();
 
-    const patchResultsEl = document.getElementById("patchResults");
-    const patchSummaryEl = document.getElementById("patchSummary");
-    const failedEl = document.getElementById("failedMatches");
-
-    if (patchResultsEl) patchResultsEl.style.display = "block";
-    if (patchSummaryEl)
-      patchSummaryEl.textContent = "Updated: " + boxes.length;
-    if (failedEl)
-      failedEl.innerHTML = "<em>Processing finished successfully.</em>";
-
-    showMessage("✅ JSON processed successfully: " + boxes.length + " boxes", "success");
+    showMessage("✅ JSON processed successfully!", "success");
   } catch (e) {
     console.error("processJSONData:", e);
-    if (e instanceof SyntaxError) {
-      showMessage("❌ Invalid JSON format. Please check the pasted text.", "error");
-    } else {
+    if (e instanceof SyntaxError)
+      showMessage("❌ Invalid JSON format.", "error");
+    else
       showMessage("❌ JSON processing error: " + e.message, "error");
-    }
   }
 };
 
