@@ -45,6 +45,7 @@ var firebaseConfig = {
   messagingSenderId: "280001054969",
   appId: "1:280001054969:web:a0792a228ea2f1c5c9ba28"
 };
+
 // ------------------- UTILITIES -------------------
 function showMessage(message, type) {
     try {
@@ -818,7 +819,17 @@ window.processJSONData = function () {
         let added = 0,
             updated = 0;
 
-        items.forEach(function (comp) {
+        items.forEach(function (comp, index) { // Add index for logging
+            // *** NEW CHECK ***
+            // Ensure comp is a valid object before proceeding
+            if (!comp || typeof comp !== 'object' || Array.isArray(comp)) {
+                console.error(`Invalid item found at index ${index} in JSON data:`, comp);
+                // Optionally throw an error or handle it differently
+                // showMessage(`❌ Invalid data format: Item at index ${index} is not a valid object.`, "error");
+                return; // Skip this invalid item
+            }
+            // *** END NEW CHECK ***
+
             if (comp.boxes && Array.isArray(comp.boxes)) {
                 comp.boxes.forEach(function (box) {
                     let deliveryDate = "";
@@ -885,16 +896,16 @@ window.processJSONData = function () {
                         });
                     }
                 });
+            } else {
+                 // Optional: Log if a valid object is missing the 'boxes' array
+                 // This helps confirm if this is the cause, although the error message suggested otherwise.
+                console.warn(`Customer object at index ${index} is missing 'boxes' array:`, comp.name || comp.id || '(no name/id)');
             }
         });
-
-
-                   
 
         saveToLocal();
         syncToFirebase();
 
-        // Update UI feedback
         const patchResultsEl = document.getElementById("patchResults");
         const patchSummaryEl = document.getElementById("patchSummary");
         const failedEl = document.getElementById("failedMatches");
@@ -912,9 +923,15 @@ window.processJSONData = function () {
         );
     } catch (e) {
         console.error("processJSONData:", e);
-        showMessage("❌ JSON parse or import error", "error");
+        // More specific error message if it's likely a JSON parse issue
+        if (e instanceof SyntaxError) {
+             showMessage("❌ Invalid JSON format. Please check the pasted text.", "error");
+        } else {
+             showMessage("❌ JSON processing error: " + e.message, "error");
+        }
     }
 };
+
 
 // reset placeholder
 window.resetTodaysPreparedBowls = function() {
@@ -957,3 +974,4 @@ document.addEventListener('DOMContentLoaded', function(){
         initializeUI();
     }
 });
+
