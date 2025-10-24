@@ -114,7 +114,7 @@ function initFirebaseAndStart() {
         }
 
         if (!firebase.apps.length) {
-            firebase.initializeApp(firebaseConfig);
+            initFirebaseAndStart(firebaseConfig);
         }
 
         // monitor connection
