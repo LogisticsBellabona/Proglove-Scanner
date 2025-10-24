@@ -825,93 +825,73 @@ window.exportAllData = async function () {
 };
 
 // ✅ Place this inside your app-logic.js (replace the old processJSONData)
-}
 
-
-const rawText = textarea.value.trim();
-if (!rawText) {
-showMessage("⚠️ Please paste JSON data first", "warning");
-return;
-}
-
-
-let jsonData;
-try {
-jsonData = JSON.parse(rawText);
-} catch (e) {
-console.error("❌ Invalid JSON:", e);
-showMessage("❌ Invalid JSON format", "error");
-return;
-}
-
-
-if (!Array.isArray(jsonData)) {
-showMessage("⚠️ JSON must be an array of bowls", "warning");
-return;
-}
-
-
-const seen = new Set();
-const processed = [];
-
-
-for (const bowl of jsonData) {
-const code = (bowl.code || bowl.vyt || bowl.id || "").trim();
-if (!code) continue;
-
-
-if (seen.has(code)) {
-console.warn("⚠️ Duplicate skipped (same bowl found twice):", code);
-continue; // skip duplicate
-}
-seen.add(code);
-
-
-const entry = {
-code,
-company: bowl.company || bowl.companyName || "",
-customer: bowl.customer || bowl.customerName || "",
-dish: bowl.dish || bowl.dishLetter || "",
-timestamp: new Date().toISOString(),
-};
-
-
-processed.push(entry);
-}
-
-
-// Update appData
-window.appData = window.appData || {};
-window.appData.activeBowls = processed;
-
-
-// Sync to Firebase (real-time update)
-const db = firebase.database();
-await db.ref("progloveData/activeBowls").set(processed);
-
-
-console.log(`✅ ${processed.length} bowls uploaded to Firebase.`);
-showMessage(`✅ ${processed.length} bowls synced to cloud`, "success");
-} catch (e) {
-console.error("processJSONData error:", e);
-showMessage("❌ JSON processing failed", "error");
-}
-};
-
-// auto-sync and update UI
-        syncToFirebase();
-        updateDisplay();
-        updateOvernightStats();
-
-        const patchSummaryEl = document.getElementById("patchSummary");
-        if (patchSummaryEl) patchSummaryEl.textContent = "Moved: " + moved + " • Updated: " + updated + " • Created: " + added + " • Ignored: " + ignored;
-
-        showMessage("✅ JSON processed: moved " + moved + " • created " + added + " • updated " + updated, "success");
-
-    } catch (e) {
-        console.error("processJSONData:", e);
-        showMessage("❌ JSON parse or import error", "error");
+window.processJSONData = async function () {
+  try {
+    const textarea = document.getElementById("jsonData");
+    if (!textarea) {
+      console.error("❌ JSON textarea not found");
+      return;
     }
+
+    const rawText = textarea.value.trim();
+    if (!rawText) {
+      showMessage("⚠️ Please paste JSON data first", "warning");
+      return;
+    }
+
+    let jsonData;
+    try {
+      jsonData = JSON.parse(rawText);
+    } catch (e) {
+      console.error("❌ Invalid JSON:", e);
+      showMessage("❌ Invalid JSON format", "error");
+      return;
+    }
+
+    if (!Array.isArray(jsonData)) {
+      showMessage("⚠️ JSON must be an array of bowls", "warning");
+      return;
+    }
+
+    const seen = new Set();
+    const processed = [];
+
+    for (const bowl of jsonData) {
+      const code = (bowl.code || bowl.vyt || bowl.id || "").trim();
+      if (!code) continue;
+
+      if (seen.has(code)) {
+        console.warn("⚠️ Duplicate skipped (same bowl found twice):", code);
+        continue; // skip duplicate
+      }
+      seen.add(code);
+
+      const entry = {
+        code,
+        company: bowl.company || bowl.companyName || "",
+        customer: bowl.customer || bowl.customerName || "",
+        dish: bowl.dish || bowl.dishLetter || "",
+        timestamp: new Date().toISOString(),
+      };
+
+      processed.push(entry);
+    }
+
+    // Update appData
+    window.appData = window.appData || {};
+    window.appData.activeBowls = processed;
+
+    // Sync to Firebase (real-time update)
+    const db = firebase.database();
+    await db.ref("progloveData/activeBowls").set(processed);
+
+    console.log(`✅ ${processed.length} bowls uploaded to Firebase.`);
+    showMessage(`✅ ${processed.length} bowls synced to cloud`, "success");
+  } catch (e) {
+    console.error("processJSONData error:", e);
+    showMessage("❌ JSON processing failed", "error");
+  }
 };
 
 /* =========================
