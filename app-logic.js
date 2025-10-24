@@ -239,20 +239,19 @@ function syncToFirebase() {
             customerData: window.appData.customerData || [],
             lastSync: nowISO()
         };
-        db.ref('progloveData').set(payload)
-            .then(function() {
-                window.appData.lastSync = nowISO();
-                saveToLocal();
-                var el = document.getElementById('lastSyncInfo');
-                if (el) el.innerText = 'Last sync: ' + new Date(window.appData.lastSync).toLocaleString();
-                showMessage('✅ Synced to cloud', 'success');
-            })
-            .catch(function(err){
-                console.error("syncToFirebase error:", err);
-                showMessage('❌ Cloud sync failed - data saved locally', 'error');
-                saveToLocal();
-            });
-    } catch(e){ console.error("syncToFirebase:", e); saveToLocal(); }
+        // ✅ use update() instead of set() to preserve existing data
+        db.ref('progloveData').update(payload)
+          .then(() => {
+              showMessage('✅ Synced to cloud', 'success');
+          })
+          .catch(err => {
+              console.error('Firebase sync failed:', err);
+              showMessage('⚠️ Sync failed', 'error');
+          });
+    } catch (e) {
+        console.error("syncToFirebase error:", e);
+        showMessage('⚠️ Firebase error', 'error');
+    }
 }
 
 // ------------------- SCAN HANDLING (CLEAN) -------------------
