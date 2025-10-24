@@ -1,11 +1,14 @@
 /* app-logic.js
-   Complete single-file logic for ProGlove Bowl Tracking System
-   - Works with Firebase Realtime DB (project: proglove-scanner)
-   - Clean scan handling (kitchen + return)
-   - Local fallback to localStorage if Firebase not available
+   Firebase-only single-file app logic for ProGlove Bowl Tracker
+   - Keeps original features (scan handling, JSON import, exports, stats)
+   - Removes localStorage entirely (cloud-only)
+   - Auto-syncs every change to Firebase (progloveData)
+   - Real-time two-way sync: remote updates update local appData/UI instantly
 */
 
-// ------------------- GLOBAL STATE -------------------
+/* =========================
+   GLOBAL STATE + CONSTS
+   ========================= */
 window.appData = {
     mode: null,
     user: null,
@@ -21,7 +24,6 @@ window.appData = {
     lastSync: null
 };
 
-// Small user list (keeps parity with your source)
 const USERS = [
     {name: "Hamid", role: "Kitchen"},
     {name: "Richa", role: "Kitchen"},
@@ -36,8 +38,10 @@ const USERS = [
     {name: "Adesh", role: "Return"}
 ];
 
-// Firebase config (keeps your existing project)
-// ------------------- FIREBASE CONFIG -------------------
+/* =========================
+   FIREBASE CONFIG
+   (uses the new project keys you provided)
+   ========================= */
 const firebaseConfig = {
   apiKey: "AIzaSyDya1dDRSeQmuKnpraSoSoTjauLlJ_J94I",
   authDomain: "proglove-bowl-tracker.firebaseapp.com",
@@ -48,11 +52,20 @@ const firebaseConfig = {
   appId: "1:280001054969:web:a0792a228ea2f1c5c9ba28"
 };
 
-// ------------------- UTILITIES -------------------
+/* =========================
+   UTILITIES
+   ========================= */
+function nowISO() { return (new Date()).toISOString(); }
+function todayDateStr() { return (new Date()).toLocaleDateString('en-GB'); }
+
 function showMessage(message, type) {
     try {
         var container = document.getElementById('messageContainer');
-        if (!container) return;
+        if (!container) {
+            // fallback: console
+            if (type === 'error') console.error(message); else console.log(message);
+            return;
+        }
         var el = document.createElement('div');
         el.style.pointerEvents = 'auto';
         el.style.background = (type === 'error') ? '#7f1d1d' : (type === 'success') ? '#064e3b' : '#1f2937';
@@ -69,52 +82,18 @@ function showMessage(message, type) {
     } catch(e){ console.error("showMessage error:",e) }
 }
 
-function nowISO() { return (new Date()).toISOString(); }
-function todayDateStr() { return (new Date()).toLocaleDateString('en-GB'); }
-
-// ------------------- STORAGE -------------------
-// function saveToLocal(); local storage disabled — cloud only {
-//     try {
-//         var toSave = {
-//             activeBowls: window.appData.activeBowls,
-//             preparedBowls: window.appData.preparedBowls,
-//             returnedBowls: window.appData.returnedBowls,
-//             myScans: window.appData.myScans,
-//             scanHistory: window.appData.scanHistory,
-//             customerData: window.appData.customerData,
-//             lastSync: window.appData.lastSync
-//         };
-//         localStorage.setItem('proglove_data_v1', JSON.stringify(toSave));
-//     } catch(e){ console.error("saveToLocal(); local storage disabled — cloud only:", e) }
-// }
-
-function loadFromLocal() {
-    try {
-        var raw = localStorage.getItem('proglove_data_v1');
-        if (!raw) return;
-        var parsed = JSON.parse(raw);
-        window.appData.activeBowls = parsed.activeBowls || [];
-        window.appData.preparedBowls = parsed.preparedBowls || [];
-        window.appData.returnedBowls = parsed.returnedBowls || [];
-        window.appData.myScans = parsed.myScans || [];
-        window.appData.scanHistory = parsed.scanHistory || [];
-        window.appData.customerData = parsed.customerData || [];
-        window.appData.lastSync = parsed.lastSync || null;
-    } catch(e){ console.error("loadFromLocal:", e) }
-}
-
-// ------------------- FIREBASE -------------------
+/* =========================
+   FIREBASE: INIT / MONITOR / REAL-TIME SYNC
+   ========================= */
 function initFirebaseAndStart() {
     try {
         if (typeof firebase === "undefined") {
             console.error("❌ Firebase SDK not loaded — check script includes.");
             updateSystemStatus(false, "Firebase SDK missing");
-            saveToLocal(); // local storage disabled — cloud only;
             initializeUI();
             return;
         }
 
-        // Initialize Firebase only once
         if (!firebase.apps.length) {
             firebase.initializeApp(firebaseConfig);
             console.log("✅ Firebase initialized:", firebaseConfig.projectId);
@@ -124,14 +103,26 @@ function initFirebaseAndStart() {
             } catch(e) { console.log("ℹ️ Firebase already initialized (unknown name)"); }
         }
 
-        // Start monitoring and loading
+        // Attempt anonymous auth so writes are allowed when anonymous auth is enabled
+        try {
+            if (firebase.auth && typeof firebase.auth === 'function') {
+                firebase.auth().onAuthStateChanged(function(user){
+                    if (!user) {
+                        firebase.auth().signInAnonymously().catch(function(err){
+                            console.warn("Anonymous sign-in failed:", err && err.message ? err.message : err);
+                        });
+                    }
+                });
+            }
+        } catch(e){ console.warn("Auth init warning:", e); }
+
         monitorConnection();
-        loadFromFirebase();
+        attachRealtimeListener();
+        loadFromFirebaseOnce();
 
     } catch (e) {
         console.error("❌ initFirebaseAndStart error:", e);
-        updateSystemStatus(false, "Firebase init failed — using local data");
-        saveToLocal(); // local storage disabled — cloud only;
+        updateSystemStatus(false, "Firebase init failed");
         initializeUI();
     }
 }
@@ -154,18 +145,11 @@ function monitorConnection() {
             console.warn("⚠️ monitorConnection skipped — Firebase not initialized");
             return;
         }
-
-        if (!firebase.database) {
-            console.warn("⚠️ Firebase database() not available — check SDK include");
-            return;
-        }
-
         var db = firebase.database();
         if (!db) {
             console.warn("⚠️ monitorConnection — database unavailable");
             return;
         }
-
         var connectedRef = db.ref(".info/connected");
         connectedRef.on("value", function (snap) {
             try {
@@ -176,78 +160,107 @@ function monitorConnection() {
                 }
             } catch(e){ console.warn("monitorConnection callback error:", e); }
         });
-
     } catch (e) {
         console.error("❌ monitorConnection failed:", e);
         updateSystemStatus(false, "Connection monitor unavailable");
     }
 }
 
-function loadFromFirebase() {
+// load once initially
+function loadFromFirebaseOnce() {
     try {
         var db = firebase.database();
         var ref = db.ref('progloveData');
-        updateSystemStatus(false, '🔄 Loading cloud...');
         ref.once('value').then(function(snapshot) {
             if (snapshot && snapshot.exists && snapshot.exists()) {
                 var val = snapshot.val() || {};
-                // merge safely: prefer cloud but keep local unmatched
+                // replace lists with cloud values
                 window.appData.activeBowls = val.activeBowls || window.appData.activeBowls || [];
                 window.appData.preparedBowls = val.preparedBowls || window.appData.preparedBowls || [];
                 window.appData.returnedBowls = val.returnedBowls || window.appData.returnedBowls || [];
                 window.appData.myScans = val.myScans || window.appData.myScans || [];
                 window.appData.scanHistory = val.scanHistory || window.appData.scanHistory || [];
                 window.appData.customerData = val.customerData || window.appData.customerData || [];
-                window.appData.lastSync = nowISO();
-                saveToLocal(); // local storage disabled — cloud only;
+                window.appData.lastSync = val.lastSync || nowISO();
                 updateSystemStatus(true);
                 showMessage('✅ Cloud data loaded', 'success');
             } else {
-                // no cloud data
                 updateSystemStatus(true, '✅ Cloud Connected (no data)');
-                saveToLocal(); // local storage disabled — cloud only;
             }
             initializeUI();
+            updateDisplay();
         }).catch(function(err){
             console.error("Firebase read failed:", err);
             updateSystemStatus(false, '⚠️ Cloud load failed');
-            saveToLocal(); // local storage disabled — cloud only;
             initializeUI();
         });
     } catch (e) {
         console.error("loadFromFirebase error:", e);
         updateSystemStatus(false, '⚠️ Firebase error');
-       saveToLocal(); // local storage disabled — cloud only;
         initializeUI();
     }
 }
 
-function syncToFirebase() {
-  try {
-    if (typeof firebase === 'undefined') return;
-
-    const db = firebase.database();
-    const payload = {
-      activeBowls: window.appData.activeBowls || [],
-      preparedBowls: window.appData.preparedBowls || [],
-      returnedBowls: window.appData.returnedBowls || [],
-      myScans: window.appData.myScans || [],
-      scanHistory: window.appData.scanHistory || [],
-      customerData: window.appData.customerData || [],
-      lastSync: nowISO()
-    };
-
-    db.ref('progloveData')
-      .update(payload)
-      .then(() => console.log("✅ Auto-synced to Firebase"))
-      .catch(err => console.error("❌ Sync error:", err));
-  } catch (e) {
-    console.error("syncToFirebase error:", e);
-  }
+// attach real-time two-way listener
+function attachRealtimeListener() {
+    try {
+        var db = firebase.database();
+        var ref = db.ref('progloveData');
+        ref.on('value', function(snapshot){
+            try {
+                if (!snapshot || !snapshot.exists()) {
+                    // no cloud data yet
+                    return;
+                }
+                var val = snapshot.val() || {};
+                // replace the important arrays with cloud state to keep in sync
+                window.appData.activeBowls = val.activeBowls || [];
+                window.appData.preparedBowls = val.preparedBowls || [];
+                window.appData.returnedBowls = val.returnedBowls || [];
+                window.appData.myScans = val.myScans || [];
+                window.appData.scanHistory = val.scanHistory || [];
+                window.appData.customerData = val.customerData || [];
+                window.appData.lastSync = val.lastSync || nowISO();
+                updateDisplay();
+                updateOvernightStats();
+                console.log("🔁 Real-time update applied from cloud.");
+            } catch(e) {
+                console.warn("Realtime listener handler error:", e);
+            }
+        });
+    } catch(e) {
+        console.warn("Could not attach realtime listener:", e);
+    }
 }
 
-// ------------------- SCAN HANDLING (CLEAN) -------------------
-// A single entry point for processing scans, no nested if/else mess.
+function syncToFirebase() {
+    try {
+        if (typeof firebase === 'undefined') return;
+        var db = firebase.database();
+        var payload = {
+            activeBowls: window.appData.activeBowls || [],
+            preparedBowls: window.appData.preparedBowls || [],
+            returnedBowls: window.appData.returnedBowls || [],
+            myScans: window.appData.myScans || [],
+            scanHistory: window.appData.scanHistory || [],
+            customerData: window.appData.customerData || [],
+            lastSync: nowISO()
+        };
+        db.ref('progloveData').update(payload).then(function(){
+            window.appData.lastSync = payload.lastSync;
+            console.log("✅ Synced to Firebase:", payload.lastSync);
+        }).catch(function(err){
+            console.error("❌ Firebase sync failed:", err);
+            showMessage("⚠️ Sync failed", "error");
+        });
+    } catch (e) {
+        console.error("syncToFirebase error:", e);
+    }
+}
+
+/* =========================
+   SCAN HANDLING (unchanged behavior, auto-sync on state change)
+   ========================= */
 function handleScanInputRaw(rawInput) {
     var startTime = Date.now();
     var result = { message: '', type: 'error', responseTime: 0 };
@@ -387,7 +400,7 @@ function kitchenScanClean(vytInfo, startTime) {
 
     window.appData.scanHistory.unshift({ type: 'kitchen', code: vytInfo.fullUrl, user: window.appData.user, timestamp: nowISO(), message: 'Prepared: ' + vytInfo.fullUrl });
 
-    // sync
+    // auto-sync
     syncToFirebase();
 
     return { message: (hadCustomer ? '✅ Prepared (customer reset): ' : '✅ Prepared: ') + vytInfo.fullUrl, type: 'success', responseTime: Date.now() - startTime };
@@ -438,7 +451,9 @@ function returnScanClean(vytInfo, startTime) {
     return { message: '✅ Returned: ' + vytInfo.fullUrl, type: 'success', responseTime: Date.now() - startTime };
 }
 
-// ------------------- UI INITIALIZATION & HANDLERS -------------------
+/* =========================
+   UI: users, dish options, start/stop scanning
+   ========================= */
 function initializeUsersDropdown() {
     try {
         var dd = document.getElementById('userSelect');
@@ -462,13 +477,11 @@ function loadDishOptions() {
     ['1','2','3','4'].forEach(function(n){ var o = document.createElement('option'); o.value = n; o.textContent = n; dd.appendChild(o); });
 }
 
-// expose UI functions
 window.setMode = function(mode) {
     window.appData.mode = mode;
     window.appData.user = null;
     window.appData.dishLetter = null;
     window.appData.scanning = false;
-    // UI changes
     var dishWrap = document.getElementById('dishWrapper');
     if (dishWrap) {
         dishWrap.style.display = (mode === 'kitchen') ? 'block' : 'none';
@@ -540,7 +553,6 @@ function updateDisplay() {
             scanInput.placeholder = window.appData.scanning ? 'Scan VYT code...' : 'Select user and press START...';
         }
 
-        // counts
         var activeEl = document.getElementById('activeCount');
         if (activeEl) activeEl.innerText = (window.appData.activeBowls.length || 0);
 
@@ -579,7 +591,6 @@ function updateOvernightStats() {
     try {
         var body = document.getElementById('livePrepReportBody');
         if (!body) return;
-        // compute cycle: 10PM yesterday -> 10PM today
         var now = new Date();
         var end = new Date(now);
         end.setHours(22,0,0,0);
@@ -615,7 +626,9 @@ function updateLastActivity() {
     window.appData.lastActivity = Date.now();
 }
 
-// keyboard / input handlers for scanner
+/* =========================
+   Keyboard / input handlers for scanner
+   ========================= */
 function bindScannerInput() {
     try {
         var inp = document.getElementById('scanInput');
@@ -649,11 +662,10 @@ function bindScannerInput() {
     } catch(e){ console.error("bindScannerInput:", e) }
 }
 
-// ------------------- EXPORTS (EXCEL FORMAT) -------------------
-
-// Make sure XLSX library is loaded from CDN before this file:
-// <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-
+/* =========================
+   EXPORTS (XLSX / Excel)
+   ========================= */
+// exportToExcel - supports XLSX (sheetjs) or ExcelJS if loaded
 function exportToExcel(sheetName, dataArray, filename) {
     if (!dataArray || dataArray.length === 0) {
         showMessage("❌ No data to export.", "error");
@@ -661,18 +673,40 @@ function exportToExcel(sheetName, dataArray, filename) {
     }
 
     try {
-        const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.json_to_sheet(dataArray);
-        XLSX.utils.book_append_sheet(wb, ws, sheetName);
-        XLSX.writeFile(wb, filename);
-        showMessage(`✅ Exported ${filename} successfully.`, "success");
+        if (window.XLSX) {
+            const wb = XLSX.utils.book_new();
+            const ws = XLSX.utils.json_to_sheet(dataArray);
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+            XLSX.writeFile(wb, filename);
+            showMessage(`✅ Exported ${filename} successfully.`, "success");
+            return;
+        }
+        if (window.ExcelJS) {
+            (async function(){
+                const workbook = new ExcelJS.Workbook();
+                const sheet = workbook.addWorksheet(sheetName);
+                if (dataArray.length > 0) {
+                    const keys = Object.keys(dataArray[0]);
+                    sheet.columns = keys.map(k => ({ header: k, key: k, width: 20 }));
+                    dataArray.forEach(r => sheet.addRow(r));
+                }
+                const buffer = await workbook.xlsx.writeBuffer();
+                const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = filename; a.click();
+                URL.revokeObjectURL(url);
+                showMessage("✅ Exported Excel", "success");
+            })().catch(err => { console.error(err); showMessage("❌ Export failed", "error"); });
+            return;
+        }
+        showMessage("❌ No spreadsheet library loaded (XLSX or ExcelJS)", "error");
     } catch (error) {
         console.error("Excel export failed:", error);
         showMessage("❌ Excel export failed.", "error");
     }
 }
 
-// ---------- Export Active Bowls ----------
 window.exportActiveBowls = function () {
     try {
         const bowls = window.appData.activeBowls || [];
@@ -702,7 +736,6 @@ window.exportActiveBowls = function () {
     }
 };
 
-// ---------- Export Returned Bowls ----------
 window.exportReturnData = function () {
     try {
         const bowls = window.appData.returnedBowls || [];
@@ -734,7 +767,6 @@ window.exportReturnData = function () {
     }
 };
 
-// ------------------- EXPORT ALL DATA TO EXCEL -------------------
 window.exportAllData = async function () {
     try {
         if (!window.appData.activeBowls || window.appData.activeBowls.length === 0) {
@@ -742,7 +774,6 @@ window.exportAllData = async function () {
             return;
         }
 
-        // Prepare a combined dataset
         const allData = window.appData.activeBowls.map(b => {
             const missingDays = b.creationDate
                 ? Math.ceil((Date.now() - new Date(b.creationDate)) / 86400000)
@@ -757,58 +788,53 @@ window.exportAllData = async function () {
             };
         });
 
-        // Use ExcelJS (lightweight Excel library)
-        const workbook = new ExcelJS.Workbook();
-        const sheet = workbook.addWorksheet("All Bowls Data");
-
-        // Define columns
-        sheet.columns = [
-            { header: "Code", key: "Code", width: 25 },
-            { header: "Dish", key: "Dish", width: 15 },
-            { header: "Company", key: "Company", width: 25 },
-            { header: "Customer", key: "Customer", width: 25 },
-            { header: "Creation Date", key: "CreationDate", width: 20 },
-            { header: "Missing Days", key: "MissingDays", width: 15 },
-        ];
-
-        // Add rows
-        allData.forEach(item => {
-            const row = sheet.addRow(item);
-            const missingDays = parseInt(item.MissingDays, 10);
-
-            // Apply red background for > 7 days missing
-            if (!isNaN(missingDays) && missingDays > 7) {
-                row.getCell("MissingDays").fill = {
-                    type: "pattern",
-                    pattern: "solid",
-                    fgColor: { argb: "FFFF4C4C" }, // bright red
-                };
-                row.getCell("MissingDays").font = { color: { argb: "FFFFFFFF" }, bold: true };
-            }
-        });
-
-        // Add header style
-        sheet.getRow(1).font = { bold: true, color: { argb: "FF00E0B3" } };
-        sheet.getRow(1).alignment = { horizontal: "center" };
-
-        // Export Excel file
-        const buffer = await workbook.xlsx.writeBuffer();
-        const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `ProGlove_All_Data_${new Date().toISOString().split("T")[0]}.xlsx`;
-        a.click();
-        URL.revokeObjectURL(url);
-
-        showMessage("✅ Excel file exported successfully!", "success");
+        if (window.ExcelJS) {
+            const workbook = new ExcelJS.Workbook();
+            const sheet = workbook.addWorksheet("All Bowls Data");
+            sheet.columns = [
+                { header: "Code", key: "Code", width: 25 },
+                { header: "Dish", key: "Dish", width: 15 },
+                { header: "Company", key: "Company", width: 25 },
+                { header: "Customer", key: "Customer", width: 25 },
+                { header: "Creation Date", key: "CreationDate", width: 20 },
+                { header: "Missing Days", key: "MissingDays", width: 15 },
+            ];
+            allData.forEach(item => {
+                const row = sheet.addRow(item);
+                const missingDays = parseInt(item.MissingDays, 10);
+                if (!isNaN(missingDays) && missingDays > 7) {
+                    row.getCell("MissingDays").fill = {
+                        type: "pattern",
+                        pattern: "solid",
+                        fgColor: { argb: "FFFF4C4C" },
+                    };
+                    row.getCell("MissingDays").font = { color: { argb: "FFFFFFFF" }, bold: true };
+                }
+            });
+            sheet.getRow(1).font = { bold: true, color: { argb: "FF00E0B3" } };
+            sheet.getRow(1).alignment = { horizontal: "center" };
+            const buffer = await workbook.xlsx.writeBuffer();
+            const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `ProGlove_All_Data_${new Date().toISOString().split("T")[0]}.xlsx`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showMessage("✅ Excel file exported successfully!", "success");
+            return;
+        } else {
+            exportToExcel("All Data", allData, `ProGlove_All_Data_${new Date().toISOString().split("T")[0]}.xlsx`);
+        }
     } catch (err) {
         console.error("❌ Excel export failed:", err);
         showMessage("❌ Excel export failed. Check console for details.", "error");
     }
 };
 
-// ------------------- Helpers for JSON processing -------------------
+/* =========================
+   JSON PATCH PROCESSING
+   ========================= */
 function isValidBowlUrl(str) {
     if (!str || typeof str !== "string") return false;
     let s = str.trim();
@@ -820,12 +846,10 @@ function isValidBowlUrl(str) {
     );
 }
 
-// Extract candidate codes from various box/dish structures
 function extractCodesFromObject(obj) {
     var codes = [];
     if (!obj) return codes;
 
-    // Common direct fields
     if (obj.code && typeof obj.code === 'string') codes.push(obj.code.trim());
     if (obj.id && typeof obj.id === 'string') codes.push(obj.id.trim());
     if (obj.boxId && typeof obj.boxId === 'string') codes.push(obj.boxId.trim());
@@ -833,7 +857,6 @@ function extractCodesFromObject(obj) {
     if (obj.bowl_id && typeof obj.bowl_id === 'string') codes.push(obj.bowl_id.trim());
     if (obj.uniqueIdentifier && typeof obj.uniqueIdentifier === 'string') codes.push(obj.uniqueIdentifier.trim());
 
-    // Arrays
     if (Array.isArray(obj.bowlCodes)) {
         obj.bowlCodes.forEach(c => { if (typeof c === 'string') codes.push(c.trim()); });
     }
@@ -841,7 +864,6 @@ function extractCodesFromObject(obj) {
         obj.codes.forEach(c => { if (typeof c === 'string') codes.push(c.trim()); });
     }
 
-    // In some payloads, dish.bowlCodes exists
     if (obj.dishes && Array.isArray(obj.dishes)) {
         obj.dishes.forEach(function(d){
             if (d.bowlCodes && Array.isArray(d.bowlCodes)) d.bowlCodes.forEach(c => { if (typeof c === 'string') codes.push(c.trim()); });
@@ -849,16 +871,9 @@ function extractCodesFromObject(obj) {
         });
     }
 
-    // Ensure uniqueness
     return codes.filter(Boolean);
 }
 
-// ------------------- JSON PATCH PROCESSING (FINAL) -------------------
-// This enforces:
-// - Only full URLs that start with http(s)://vyt or http(s)://vytal are accepted
-// - Exact full string match against preparedBowls to move -> activeBowls
-// - If not in prepared, create new active bowl (only if valid URL)
-// - If the same bowl appears more than once in the same incoming batch -> ERROR and abort
 window.processJSONData = function () {
     try {
         const raw = document.getElementById("jsonData").value?.trim();
@@ -868,22 +883,14 @@ window.processJSONData = function () {
         }
 
         let parsed;
-        try {
-            parsed = JSON.parse(raw);
-        } catch (e) {
-            console.error("JSON parse error:", e);
-            showMessage("❌ Invalid JSON format", "error");
-            return;
-        }
+        try { parsed = JSON.parse(raw); } catch (e) { console.error("JSON parse error:", e); showMessage("❌ Invalid JSON format", "error"); return; }
 
-        // Normalize input into an array of items to inspect
         let containers = [];
         if (Array.isArray(parsed)) {
-            containers = parsed.slice(); // array of items
+            containers = parsed.slice();
         } else if (parsed.companies && Array.isArray(parsed.companies)) {
             containers = parsed.companies.slice();
         } else if (parsed.boxes && Array.isArray(parsed.boxes)) {
-            // wrap into a single container with boxes
             containers = [{ boxes: parsed.boxes }];
         } else if (parsed.deliveries && Array.isArray(parsed.deliveries)) {
             containers = parsed.deliveries.slice();
@@ -891,17 +898,14 @@ window.processJSONData = function () {
             containers = [parsed];
         }
 
-        // First pass: flatten all candidate codes from the whole batch and detect duplicate entries in the batch
-        const batchCodes = []; // preserve order
+        const batchCodes = [];
         containers.forEach(function(cont){
-            // If container itself contains boxes array
             if (cont && Array.isArray(cont.boxes)) {
                 cont.boxes.forEach(function(box){
                     const codes = extractCodesFromObject(box);
                     if (codes.length) {
                         codes.forEach(c => batchCodes.push({ code: c, meta: { container: cont, box: box } }));
                     }
-                    // Also support nested dishes inside box (users/dishes)
                     if (box.dishes && Array.isArray(box.dishes)) {
                         box.dishes.forEach(function(dish){
                             if (dish.bowlCodes && Array.isArray(dish.bowlCodes)) {
@@ -911,7 +915,6 @@ window.processJSONData = function () {
                     }
                 });
             } else {
-                // container might be a simple object with codes or bowlCodes or nested dishes
                 const codes = extractCodesFromObject(cont);
                 if (codes.length) {
                     codes.forEach(c => batchCodes.push({ code: c, meta: { container: cont } }));
@@ -926,50 +929,33 @@ window.processJSONData = function () {
             }
         });
 
-        if (batchCodes.length === 0) {
-            showMessage("❌ No bowl codes found in JSON", "error");
-            return;
-        }
+        if (batchCodes.length === 0) { showMessage("❌ No bowl codes found in JSON", "error"); return; }
 
-        // Detect duplicates within the incoming batch (exact full-string duplicates)
         const seen = new Set();
         for (let i = 0; i < batchCodes.length; i++) {
             const c = batchCodes[i].code;
             if (seen.has(c)) {
                 console.error("Duplicate in same batch:", c);
                 showMessage("❌ Duplicate bowl in same batch detected: " + c, "error");
-                return; // Abort processing on duplicate (per your instruction)
+                return;
             }
             seen.add(c);
         }
 
-        // Now process each code (order preserved)
         let added = 0, updated = 0, moved = 0, ignored = 0;
         const today = todayDateStr();
 
         batchCodes.forEach(function(entry){
             const rawCode = entry.code;
             if (!rawCode || typeof rawCode !== 'string') { ignored++; return; }
-
             const code = rawCode.trim();
+            if (!isValidBowlUrl(code)) { ignored++; return; }
 
-            // Only accept full URLs that start with allowed prefixes
-            if (!isValidBowlUrl(code)) {
-                // ignore silently as per instructions (non-VYT/VYTAL)
-                ignored++;
-                return;
-            }
-
-            // Try to find exact match in preparedBowls (exact full string match)
             const preparedIndex = window.appData.preparedBowls.findIndex(b => b.code === code);
 
             if (preparedIndex !== -1) {
-                // Move from prepared -> active
                 const pb = window.appData.preparedBowls.splice(preparedIndex, 1)[0];
-
-                // enrich pb with info from JSON if present (container/box/dish meta)
                 let meta = entry.meta || {};
-                // attempt to extract company/customer from container/box/dish
                 let company = (meta.container && meta.container.name) || (meta.container && meta.container.company) || pb.company || "Unknown";
                 let customer = (meta.dish && meta.dish.users && meta.dish.users.length > 0) ? meta.dish.users.map(u=>u.username || u).join(", ") : (meta.box && meta.box.customer) || pb.customer || "Unknown";
 
@@ -987,10 +973,8 @@ window.processJSONData = function () {
                 window.appData.activeBowls.push(activeObj);
                 moved++;
             } else {
-                // See if already active
                 let existing = window.appData.activeBowls.find(b => b.code === code);
                 if (existing) {
-                    // Update fields from JSON meta if available
                     let meta = entry.meta || {};
                     existing.company = (meta.container && (meta.container.name || meta.container.company)) || existing.company || "Unknown";
                     existing.customer = existing.customer || ((meta.dish && meta.dish.users && meta.dish.users.length>0) ? meta.dish.users.map(u=>u.username||u).join(", ") : existing.customer) || existing.customer || "Unknown";
@@ -998,7 +982,6 @@ window.processJSONData = function () {
                     existing.timestamp = existing.timestamp || nowISO();
                     updated++;
                 } else {
-                    // Create new active bowl
                     let meta = entry.meta || {};
                     let company = (meta.container && (meta.container.name || meta.container.company)) || "Unknown";
                     let customer = (meta.dish && meta.dish.users && meta.dish.users.length > 0) ? meta.dish.users.map(u=>u.username||u).join(", ") : (meta.box && meta.box.customer) || "Unknown";
@@ -1020,23 +1003,13 @@ window.processJSONData = function () {
             }
         });
 
-        // persist and update UI
-       saveToLocal(); // local storage disabled — cloud only;
+        // auto-sync and update UI
         syncToFirebase();
         updateDisplay();
         updateOvernightStats();
 
-        // Update patch results UI if present
-        const patchResultsEl = document.getElementById("patchResults");
         const patchSummaryEl = document.getElementById("patchSummary");
-        const failedEl = document.getElementById("failedMatches");
-
-        if (patchResultsEl) patchResultsEl.style.display = "block";
-        if (patchSummaryEl)
-            patchSummaryEl.textContent =
-                "Moved: " + moved + " • Updated: " + updated + " • Created: " + added + " • Ignored: " + ignored;
-        if (failedEl)
-            failedEl.innerHTML = "<em>Processing finished.</em>";
+        if (patchSummaryEl) patchSummaryEl.textContent = "Moved: " + moved + " • Updated: " + updated + " • Created: " + added + " • Ignored: " + ignored;
 
         showMessage("✅ JSON processed: moved " + moved + " • created " + added + " • updated " + updated, "success");
 
@@ -1046,9 +1019,10 @@ window.processJSONData = function () {
     }
 };
 
-// reset placeholder
+/* =========================
+   Reset / helpers
+   ========================= */
 window.resetTodaysPreparedBowls = function() {
-    // keep simple: remove today's prepared bowls (confirmation skipped for brevity)
     var today = todayDateStr();
     window.appData.preparedBowls = (window.appData.preparedBowls || []).filter(function(b){ return b.date !== today; });
     syncToFirebase();
@@ -1056,7 +1030,9 @@ window.resetTodaysPreparedBowls = function() {
     showMessage('✅ Today\'s prepared bowls cleared', 'success');
 };
 
-// ------------------- BOOTSTRAP -------------------
+/* =========================
+   Bootstrap / UI init
+   ========================= */
 function initializeUI() {
     try {
         initializeUsersDropdown();
@@ -1065,7 +1041,6 @@ function initializeUI() {
         updateDisplay();
         updateOvernightStats();
 
-        // subtle auto-focus on input when scanning active
         document.addEventListener('keydown', function(e){
             if (!window.appData.scanning) return;
             var input = document.getElementById('scanInput');
@@ -1075,15 +1050,3 @@ function initializeUI() {
         });
     } catch(e){ console.error("initializeUI:", e) }
 }
-
-// ------------------- STARTUP -------------------
-document.addEventListener('DOMContentLoaded', function(){
-    try {
-        // Begin trying to initialize Firebase and load data
-        initFirebaseAndStart();
-    } catch(e){
-        console.error("startup error:", e);
-        saveToLocal(); // local storage disabled — cloud only;
-        initializeUI();
-    }
-});
