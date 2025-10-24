@@ -808,17 +808,16 @@ window.exportAllData = async function () {
 window.processJSONData = function processJSONData(raw) {
   try {
     if (!raw) {
-      showMessage("❌ No JSON data provided to process.", "error");
-      console.warn("processJSONData called with:", raw);
+      const textarea = document.getElementById('jsonData');
+      raw = textarea ? textarea.value.trim() : "";
+    }
+
+    if (!raw) {
+      showMessage("❌ No JSON data provided.", "error");
       return;
     }
 
-    let parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-
-    if (!parsed) {
-      showMessage("❌ Empty or invalid JSON object.", "error");
-      return;
-    }
+    let parsed = JSON.parse(raw);
 
     let boxes = [];
     if (Array.isArray(parsed)) boxes = parsed;
@@ -828,17 +827,12 @@ window.processJSONData = function processJSONData(raw) {
 
     console.log("✅ Parsed boxes:", boxes);
 
-    // continue with your save and sync logic...
     saveToLocal();
     syncToFirebase();
-
     showMessage("✅ JSON processed successfully!", "success");
   } catch (e) {
     console.error("processJSONData:", e);
-    if (e instanceof SyntaxError)
-      showMessage("❌ Invalid JSON format.", "error");
-    else
-      showMessage("❌ JSON processing error: " + e.message, "error");
+    showMessage("❌ Invalid or unsupported JSON.", "error");
   }
 };
 
