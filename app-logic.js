@@ -1,4 +1,4 @@
-/* ap-logic.js
+/* app-logic.js
    Complete single-file logic for ProGlove Bowl Tracking System
    - Works with Firebase Realtime DB (project: proglove-scanner)
    - Clean scan handling (kitchen + return)
