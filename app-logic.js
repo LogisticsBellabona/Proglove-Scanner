@@ -42,13 +42,12 @@ const USERS = [
 
 // Firebase config (keeps your existing project)
 var firebaseConfig = {
-    apiKey: "AIzaSyCL3hffCHosBceIRGR1it2dYEDb3uxIrJw",
-    authDomain: "proglove-scanner.firebaseapp.com",
-    databaseURL: "https://proglove-scanner-default-rtdb.europe-west1.firebasedatabase.app",
-    projectId: "proglove-scanner",
-    storageBucket: "proglove-scanner.firebasestorage.app",
-    messagingSenderId: "177575768177",
-    appId: "1:177575768177:web:0a0acbf222218e0c0b2bd0"
+  apiKey: "AIzaSyDya1dDRSeQmuKnpraSoSoTjauLlJ_J94I",
+  authDomain: "proglove-bowl-tracker.firebaseapp.com",
+  projectId: "proglove-bowl-tracker",
+  storageBucket: "proglove-bowl-tracker.firebasestorage.app",
+  messagingSenderId: "280001054969",
+  appId: "1:280001054969:web:a0792a228ea2f1c5c9ba28"
 };
 
 // ------------------- UTILITIES -------------------
