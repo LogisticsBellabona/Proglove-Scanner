@@ -803,105 +803,16 @@ window.exportAllData = async function () {
     }
 };
 // ------------------- JSON PATCH PROCESSING (UPDATED) -------------------
-window.processJSONData = function () {
+window.processJSONData = function processDeliveryJSON(raw) {
     try {
-        const raw = document.getElementById("jsonData").value?.trim();
-        if (!raw) {
-            showMessage("❌ Paste JSON first", "error");
-            return;
-        }
-
-        const parsed = JSON.parse(raw);
-        const items = Array.isArray(parsed)
-            ? parsed
-            : parsed.companies || parsed.boxes || [parsed];
-
-        let added = 0,
-            updated = 0;
-
-        items.forEach(function (comp, index) { // Add index for logging
-            // *** NEW CHECK ***
-            // Ensure comp is a valid object before proceeding
-            if (!comp || typeof comp !== 'object' || Array.isArray(comp)) {
-                console.error(`Invalid item found at index ${index} in JSON data:`, comp);
-                // Optionally throw an error or handle it differently
-                // showMessage(`❌ Invalid data format: Item at index ${index} is not a valid object.`, "error");
-                return; // Skip this invalid item
-            }
-            // *** END NEW CHECK ***
-
-            if (comp.boxes && Array.isArray(comp.boxes)) {
-                comp.boxes.forEach(function (box) {
-                    let deliveryDate = "";
-                    if (box.uniqueIdentifier) {
-                        const dateMatch = box.uniqueIdentifier.match(
-                            /\d{4}-\d{2}-\d{2}/
-                        );
-                        if (dateMatch) {
-                            deliveryDate = dateMatch[0];
-                        }
-                    }
-
-                    if (box.dishes && Array.isArray(box.dishes)) {
-                        box.dishes.forEach(function (dish) {
-                            if (dish.bowlCodes && Array.isArray(dish.bowlCodes)) {
-                                dish.bowlCodes.forEach(function (code) {
-                                    // *** CHANGE IS HERE ***
-                                    // Check if the code is valid and not a 'bamboo' URL
-                                    if (!code || typeof code !== 'string' || code.startsWith('bamboo://')) {
-                                        console.log('Skipping invalid or bamboo bowl code:', code);
-                                        return; // Skip this bowl code
-                                    }
-                                    // *** END OF CHANGE ***
-
-                                    let existing = window.appData.activeBowls.find(
-                                        (b) => b.code === code
-                                    );
-
-                                    const customers =
-                                        dish.users && dish.users.length > 0
-                                            ? dish.users
-                                                  .map((u) => u.username)
-                                                  .join(", ")
-                                            : "Unknown";
-
-                                    if (existing) {
-                                        existing.company =
-                                            comp.name ||
-                                            existing.company ||
-                                            "Unknown";
-                                        existing.customer =
-                                            customers ||
-                                            existing.customer ||
-                                            "Unknown";
-                                        existing.creationDate =
-                                            deliveryDate ||
-                                            existing.creationDate ||
-                                            todayDateStr();
-                                        updated++;
-                                    } else {
-                                        window.appData.activeBowls.push({
-                                            code: code,
-                                            dish: dish.label || "",
-                                            company: comp.name || "Unknown",
-                                            customer: customers,
-                                            creationDate:
-                                                deliveryDate || todayDateStr(),
-                                            timestamp: nowISO(),
-                                        });
-                                        added++;
-                                    }
-                                });
-                            }
-                        });
-                    }
-                });
-            } else {
-                 // Optional: Log if a valid object is missing the 'boxes' array
-                 // This helps confirm if this is the cause, although the error message suggested otherwise.
-                console.warn(`Customer object at index ${index} is missing 'boxes' array:`, comp.name || comp.id || '(no name/id)');
-            }
-        });
+        let parsed = (typeof raw === 'string') ? JSON.parse(raw) : raw;
+ 
+        // Normalize structure: find array of boxes or deliveries
+        let boxes = [];
+        if (Array.isArray(parsed)) boxes = parsed;
+        else if (parsed.boxes && Array.isArray(parsed.boxes)) boxes = parsed.boxes;
+        else if (parsed.deliveries && Array.isArray(parsed.deliveries)) boxes = parsed.deliveries;
+        else boxes = [parsed];
 
         saveToLocal();
         syncToFirebase();
