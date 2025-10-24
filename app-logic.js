@@ -36,8 +36,8 @@ const USERS = [
     {name: "Adesh", role: "Return"}
 ];
 
-// Firebase config (fixed)
-var firebaseConfig = {
+// ✅ Correct Firebase Config for proglove-bowl-tracker
+const firebaseConfig = {
   apiKey: "AIzaSyDya1dDRSeQmuKnpraSoSoTjauLlJ_J94I",
   authDomain: "proglove-bowl-tracker.firebaseapp.com",
   databaseURL: "https://proglove-bowl-tracker-default-rtdb.firebaseio.com",
@@ -46,6 +46,7 @@ var firebaseConfig = {
   messagingSenderId: "280001054969",
   appId: "1:280001054969:web:a0792a228ea2f1c5c9ba28"
 };
+
 
 // ------------------- UTILITIES -------------------
 function showMessage(message, type) {
