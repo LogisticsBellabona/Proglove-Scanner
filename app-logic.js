@@ -866,134 +866,159 @@ function extractCodesFromObject(obj) {
     return codes.filter(Boolean);
 }
 
-window.processJSONData = function () {
+window.processJSONData = async function () {
+  try {
+    const raw = document.getElementById("jsonData").value?.trim();
+    if (!raw) {
+      showMessage("❌ Paste JSON first", "error");
+      return;
+    }
+
+    let parsed;
     try {
-        const raw = document.getElementById("jsonData").value?.trim();
-        if (!raw) {
-            showMessage("❌ Paste JSON first", "error");
-            return;
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      console.error("JSON parse error:", e);
+      showMessage("❌ Invalid JSON format", "error");
+      return;
+    }
+
+    // Flatten structure: find every bowl code in any nested path
+    const batchCodes = [];
+    function extractAllCodes(obj, meta = {}) {
+      if (!obj) return;
+
+      // Direct fields
+      const possibleFields = ["code", "bowlCode", "bowl_id", "id", "uniqueIdentifier"];
+      for (const field of possibleFields) {
+        if (obj[field] && typeof obj[field] === "string") {
+          batchCodes.push({ code: obj[field].trim(), meta });
         }
+      }
 
-        let parsed;
-        try { parsed = JSON.parse(raw); } catch (e) { console.error("JSON parse error:", e); showMessage("❌ Invalid JSON format", "error"); return; }
+      // Arrays of codes
+      if (Array.isArray(obj.codes)) {
+        obj.codes.forEach(c => batchCodes.push({ code: c.trim(), meta }));
+      }
+      if (Array.isArray(obj.bowlCodes)) {
+        obj.bowlCodes.forEach(c => batchCodes.push({ code: c.trim(), meta }));
+      }
 
-        let containers = [];
-        if (Array.isArray(parsed)) {
-            containers = parsed.slice();
-        } else if (parsed.companies && Array.isArray(parsed.companies)) {
-            containers = parsed.companies.slice();
-        } else if (parsed.boxes && Array.isArray(parsed.boxes)) {
-            containers = [{ boxes: parsed.boxes }];
-        } else if (parsed.deliveries && Array.isArray(parsed.deliveries)) {
-            containers = parsed.deliveries.slice();
-        } else {
-            containers = [parsed];
-        }
+      // Nested structures
+      if (Array.isArray(obj.boxes)) obj.boxes.forEach(b => extractAllCodes(b, { ...meta, box: b }));
+      if (Array.isArray(obj.dishes)) obj.dishes.forEach(d => extractAllCodes(d, { ...meta, dish: d }));
+      if (Array.isArray(obj.companies)) obj.companies.forEach(c => extractAllCodes(c, { ...meta, company: c }));
+      if (Array.isArray(obj.deliveries)) obj.deliveries.forEach(d => extractAllCodes(d, { ...meta, delivery: d }));
+    }
 
-        const batchCodes = [];
-        containers.forEach(function(cont){
-            if (cont && Array.isArray(cont.boxes)) {
-                cont.boxes.forEach(function(box){
-                    const codes = extractCodesFromObject(box);
-                    if (codes.length) {
-                        codes.forEach(c => batchCodes.push({ code: c, meta: { container: cont, box: box } }));
-                    }
-                    if (box.dishes && Array.isArray(box.dishes)) {
-                        box.dishes.forEach(function(dish){
-                            if (dish.bowlCodes && Array.isArray(dish.bowlCodes)) {
-                                dish.bowlCodes.forEach(c => batchCodes.push({ code: c, meta: { container: cont, dish: dish, box: box } }));
-                            }
-                        });
-                    }
-                });
-            } else {
-                const codes = extractCodesFromObject(cont);
-                if (codes.length) {
-                    codes.forEach(c => batchCodes.push({ code: c, meta: { container: cont } }));
-                }
-                if (cont.dishes && Array.isArray(cont.dishes)) {
-                    cont.dishes.forEach(function(dish){
-                        if (dish.bowlCodes && Array.isArray(dish.bowlCodes)) {
-                            dish.bowlCodes.forEach(c => batchCodes.push({ code: c, meta: { container: cont, dish: dish } }));
-                        }
-                    });
-                }
-            }
-        });
+    extractAllCodes(parsed);
 
-        if (batchCodes.length === 0) { showMessage("❌ No bowl codes found in JSON", "error"); return; }
+    if (batchCodes.length === 0) {
+      showMessage("❌ No bowl codes found in JSON", "error");
+      return;
+    }
 
-        const seen = new Set();
-        for (let i = 0; i < batchCodes.length; i++) {
-            const c = batchCodes[i].code;
-            if (seen.has(c)) {
-                console.error("Duplicate in same batch:", c);
-                showMessage("❌ Duplicate bowl in same batch detected: " + c, "error");
-                return;
-            }
-            seen.add(c);
-        }
+    // Remove duplicates (keep first occurrence)
+    const seen = new Set();
+    const uniqueBatch = batchCodes.filter(entry => {
+      if (seen.has(entry.code)) {
+        console.warn("⚠️ Duplicate skipped:", entry.code);
+        return false;
+      }
+      seen.add(entry.code);
+      return true;
+    });
 
-        let added = 0, updated = 0, moved = 0, ignored = 0;
-        const today = todayDateStr();
+    // Process each bowl
+    let added = 0, updated = 0, moved = 0;
+    const today = todayDateStr();
 
-        batchCodes.forEach(function(entry){
-            const rawCode = entry.code;
-            if (!rawCode || typeof rawCode !== 'string') { ignored++; return; }
-            const code = rawCode.trim();
-            if (!isValidBowlUrl(code)) { ignored++; return; }
+    for (const entry of uniqueBatch) {
+      const code = entry.code;
+      const meta = entry.meta || {};
 
-            const preparedIndex = window.appData.preparedBowls.findIndex(b => b.code === code);
+      if (!isValidBowlUrl(code)) continue; // skip invalid
 
-            if (preparedIndex !== -1) {
-                const pb = window.appData.preparedBowls.splice(preparedIndex, 1)[0];
-                let meta = entry.meta || {};
-                let company = (meta.container && meta.container.name) || (meta.container && meta.container.company) || pb.company || "Unknown";
-                let customer = (meta.dish && meta.dish.users && meta.dish.users.length > 0) ? meta.dish.users.map(u=>u.username || u).join(", ") : (meta.box && meta.box.customer) || pb.customer || "Unknown";
+      // Find if this bowl already exists
+      const prepIndex = window.appData.preparedBowls.findIndex(b => b.code === code);
+      const activeIndex = window.appData.activeBowls.findIndex(b => b.code === code);
 
-                const activeObj = {
-                    code: code,
-                    dish: pb.dish || (meta.dish && meta.dish.label) || "",
-                    user: pb.user || "Unknown",
-                    company: company,
-                    customer: customer,
-                    creationDate: pb.timestamp || nowISO(),
-                    timestamp: nowISO(),
-                    status: "ACTIVE"
-                };
+      // Extract metadata
+      const company =
+        (meta.company && (meta.company.name || meta.company.company)) ||
+        (meta.box && (meta.box.company || meta.box.name)) ||
+        (meta.delivery && meta.delivery.company) ||
+        "Unknown";
 
-                window.appData.activeBowls.push(activeObj);
-                moved++;
-            } else {
-                let existing = window.appData.activeBowls.find(b => b.code === code);
-                if (existing) {
-                    let meta = entry.meta || {};
-                    existing.company = (meta.container && (meta.container.name || meta.container.company)) || existing.company || "Unknown";
-                    existing.customer = existing.customer || ((meta.dish && meta.dish.users && meta.dish.users.length>0) ? meta.dish.users.map(u=>u.username||u).join(", ") : existing.customer) || existing.customer || "Unknown";
-                    existing.creationDate = existing.creationDate || today;
-                    existing.timestamp = existing.timestamp || nowISO();
-                    updated++;
-                } else {
-                    let meta = entry.meta || {};
-                    let company = (meta.container && (meta.container.name || meta.container.company)) || "Unknown";
-                    let customer = (meta.dish && meta.dish.users && meta.dish.users.length > 0) ? meta.dish.users.map(u=>u.username||u).join(", ") : (meta.box && meta.box.customer) || "Unknown";
+      const customer =
+        (meta.dish && Array.isArray(meta.dish.users) && meta.dish.users.length > 0)
+          ? meta.dish.users.map(u => u.username || u).join(", ")
+          : (meta.box && meta.box.customer) ||
+            (meta.company && meta.company.customer) ||
+            "Unknown";
 
-                    const newActive = {
-                        code: code,
-                        dish: (meta.dish && meta.dish.label) || "",
-                        user: "UNKNOWN",
-                        company: company,
-                        customer: customer,
-                        creationDate: today,
-                        timestamp: nowISO(),
-                        status: "ACTIVE"
-                    };
+      const dish =
+        (meta.dish && meta.dish.label) ||
+        (meta.box && meta.box.dish) ||
+        "";
 
-                    window.appData.activeBowls.push(newActive);
-                    added++;
-                }
-            }
-        });
+      if (prepIndex !== -1) {
+        // Move prepared → active
+        const bowl = window.appData.preparedBowls.splice(prepIndex, 1)[0];
+        const activeObj = {
+          code,
+          dish: bowl.dish || dish,
+          user: bowl.user || "Unknown",
+          company,
+          customer,
+          creationDate: bowl.timestamp || nowISO(),
+          timestamp: nowISO(),
+          status: "ACTIVE"
+        };
+        window.appData.activeBowls.push(activeObj);
+        moved++;
+      } else if (activeIndex !== -1) {
+        // Update existing active
+        const bowl = window.appData.activeBowls[activeIndex];
+        bowl.company = company;
+        bowl.customer = customer;
+        bowl.dish = bowl.dish || dish;
+        bowl.timestamp = nowISO();
+        updated++;
+      } else {
+        // Create new active
+        const newBowl = {
+          code,
+          dish,
+          user: "UNKNOWN",
+          company,
+          customer,
+          creationDate: today,
+          timestamp: nowISO(),
+          status: "ACTIVE"
+        };
+        window.appData.activeBowls.push(newBowl);
+        added++;
+      }
+    }
+
+    // Auto sync with Firebase (real-time)
+    syncToFirebase();
+
+    // UI feedback
+    updateDisplay();
+    updateOvernightStats();
+
+    const summary = `✅ JSON processed — Moved: ${moved} • Updated: ${updated} • Added: ${added}`;
+    showMessage(summary, "success");
+    console.log(summary);
+
+  } catch (e) {
+    console.error("processJSONData error:", e);
+    showMessage("❌ JSON processing failed", "error");
+  }
+};
+
 
         // auto-sync and update UI
         syncToFirebase();
