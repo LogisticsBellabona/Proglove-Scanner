@@ -41,7 +41,7 @@ const USERS = [
 var firebaseConfig = {
   apiKey: "AIzaSyDya1dDRSeQmuKnpraSoSoTjauLlJ_J94I",
   authDomain: "proglove-bowl-tracker.firebaseapp.com",
-  databaseURL: "https://proglove-bowl-tracker-default-rtdb.firebaseio.com",
+  databaseURL: "https://proglove-bowl-tracker-default-rtdb.europe-west1.firebasedatabase.app",
   projectId: "proglove-bowl-tracker",
   storageBucket: "proglove-bowl-tracker.firebasestorage.app",
   messagingSenderId: "280001054969",
