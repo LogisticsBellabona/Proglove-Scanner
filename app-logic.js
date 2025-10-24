@@ -824,203 +824,81 @@ window.exportAllData = async function () {
     }
 };
 
-/* =========================
-   JSON PATCH PROCESSING
-   ========================= */
-function isValidBowlUrl(str) {
-    if (!str || typeof str !== "string") return false;
-    let s = str.trim();
-    return (
-        s.startsWith("http://vyt") ||
-        s.startsWith("https://vyt") ||
-        s.startsWith("http://vytal") ||
-        s.startsWith("https://vytal")
-    );
+// ✅ Place this inside your app-logic.js (replace the old processJSONData)
 }
 
-function extractCodesFromObject(obj) {
-    var codes = [];
-    if (!obj) return codes;
 
-    if (obj.code && typeof obj.code === 'string') codes.push(obj.code.trim());
-    if (obj.id && typeof obj.id === 'string') codes.push(obj.id.trim());
-    if (obj.boxId && typeof obj.boxId === 'string') codes.push(obj.boxId.trim());
-    if (obj.bowlCode && typeof obj.bowlCode === 'string') codes.push(obj.bowlCode.trim());
-    if (obj.bowl_id && typeof obj.bowl_id === 'string') codes.push(obj.bowl_id.trim());
-    if (obj.uniqueIdentifier && typeof obj.uniqueIdentifier === 'string') codes.push(obj.uniqueIdentifier.trim());
-
-    if (Array.isArray(obj.bowlCodes)) {
-        obj.bowlCodes.forEach(c => { if (typeof c === 'string') codes.push(c.trim()); });
-    }
-    if (Array.isArray(obj.codes)) {
-        obj.codes.forEach(c => { if (typeof c === 'string') codes.push(c.trim()); });
-    }
-
-    if (obj.dishes && Array.isArray(obj.dishes)) {
-        obj.dishes.forEach(function(d){
-            if (d.bowlCodes && Array.isArray(d.bowlCodes)) d.bowlCodes.forEach(c => { if (typeof c === 'string') codes.push(c.trim()); });
-            if (d.bowlCode && typeof d.bowlCode === 'string') codes.push(d.bowlCode.trim());
-        });
-    }
-
-    return codes.filter(Boolean);
+const rawText = textarea.value.trim();
+if (!rawText) {
+showMessage("⚠️ Please paste JSON data first", "warning");
+return;
 }
 
-window.processJSONData = async function () {
-  try {
-    const raw = document.getElementById("jsonData").value?.trim();
-    if (!raw) {
-      showMessage("❌ Paste JSON first", "error");
-      return;
-    }
 
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e) {
-      console.error("JSON parse error:", e);
-      showMessage("❌ Invalid JSON format", "error");
-      return;
-    }
+let jsonData;
+try {
+jsonData = JSON.parse(rawText);
+} catch (e) {
+console.error("❌ Invalid JSON:", e);
+showMessage("❌ Invalid JSON format", "error");
+return;
+}
 
-    // Flatten structure: find every bowl code in any nested path
-    const batchCodes = [];
-    function extractAllCodes(obj, meta = {}) {
-      if (!obj) return;
 
-      // Direct fields
-      const possibleFields = ["code", "bowlCode", "bowl_id", "id", "uniqueIdentifier"];
-      for (const field of possibleFields) {
-        if (obj[field] && typeof obj[field] === "string") {
-          batchCodes.push({ code: obj[field].trim(), meta });
-        }
-      }
+if (!Array.isArray(jsonData)) {
+showMessage("⚠️ JSON must be an array of bowls", "warning");
+return;
+}
 
-      // Arrays of codes
-      if (Array.isArray(obj.codes)) {
-        obj.codes.forEach(c => batchCodes.push({ code: c.trim(), meta }));
-      }
-      if (Array.isArray(obj.bowlCodes)) {
-        obj.bowlCodes.forEach(c => batchCodes.push({ code: c.trim(), meta }));
-      }
 
-      // Nested structures
-      if (Array.isArray(obj.boxes)) obj.boxes.forEach(b => extractAllCodes(b, { ...meta, box: b }));
-      if (Array.isArray(obj.dishes)) obj.dishes.forEach(d => extractAllCodes(d, { ...meta, dish: d }));
-      if (Array.isArray(obj.companies)) obj.companies.forEach(c => extractAllCodes(c, { ...meta, company: c }));
-      if (Array.isArray(obj.deliveries)) obj.deliveries.forEach(d => extractAllCodes(d, { ...meta, delivery: d }));
-    }
+const seen = new Set();
+const processed = [];
 
-    extractAllCodes(parsed);
 
-    if (batchCodes.length === 0) {
-      showMessage("❌ No bowl codes found in JSON", "error");
-      return;
-    }
+for (const bowl of jsonData) {
+const code = (bowl.code || bowl.vyt || bowl.id || "").trim();
+if (!code) continue;
 
-    // Remove duplicates (keep first occurrence)
-    const seen = new Set();
-    const uniqueBatch = batchCodes.filter(entry => {
-      if (seen.has(entry.code)) {
-        console.warn("⚠️ Duplicate skipped:", entry.code);
-        return false;
-      }
-      seen.add(entry.code);
-      return true;
-    });
 
-    // Process each bowl
-    let added = 0, updated = 0, moved = 0;
-    const today = todayDateStr();
+if (seen.has(code)) {
+console.warn("⚠️ Duplicate skipped (same bowl found twice):", code);
+continue; // skip duplicate
+}
+seen.add(code);
 
-    for (const entry of uniqueBatch) {
-      const code = entry.code;
-      const meta = entry.meta || {};
 
-      if (!isValidBowlUrl(code)) continue; // skip invalid
-
-      // Find if this bowl already exists
-      const prepIndex = window.appData.preparedBowls.findIndex(b => b.code === code);
-      const activeIndex = window.appData.activeBowls.findIndex(b => b.code === code);
-
-      // Extract metadata
-      const company =
-        (meta.company && (meta.company.name || meta.company.company)) ||
-        (meta.box && (meta.box.company || meta.box.name)) ||
-        (meta.delivery && meta.delivery.company) ||
-        "Unknown";
-
-      const customer =
-        (meta.dish && Array.isArray(meta.dish.users) && meta.dish.users.length > 0)
-          ? meta.dish.users.map(u => u.username || u).join(", ")
-          : (meta.box && meta.box.customer) ||
-            (meta.company && meta.company.customer) ||
-            "Unknown";
-
-      const dish =
-        (meta.dish && meta.dish.label) ||
-        (meta.box && meta.box.dish) ||
-        "";
-
-      if (prepIndex !== -1) {
-        // Move prepared → active
-        const bowl = window.appData.preparedBowls.splice(prepIndex, 1)[0];
-        const activeObj = {
-          code,
-          dish: bowl.dish || dish,
-          user: bowl.user || "Unknown",
-          company,
-          customer,
-          creationDate: bowl.timestamp || nowISO(),
-          timestamp: nowISO(),
-          status: "ACTIVE"
-        };
-        window.appData.activeBowls.push(activeObj);
-        moved++;
-      } else if (activeIndex !== -1) {
-        // Update existing active
-        const bowl = window.appData.activeBowls[activeIndex];
-        bowl.company = company;
-        bowl.customer = customer;
-        bowl.dish = bowl.dish || dish;
-        bowl.timestamp = nowISO();
-        updated++;
-      } else {
-        // Create new active
-        const newBowl = {
-          code,
-          dish,
-          user: "UNKNOWN",
-          company,
-          customer,
-          creationDate: today,
-          timestamp: nowISO(),
-          status: "ACTIVE"
-        };
-        window.appData.activeBowls.push(newBowl);
-        added++;
-      }
-    }
-
-    // Auto sync with Firebase (real-time)
-    syncToFirebase();
-
-    // UI feedback
-    updateDisplay();
-    updateOvernightStats();
-
-    const summary = `✅ JSON processed — Moved: ${moved} • Updated: ${updated} • Added: ${added}`;
-    showMessage(summary, "success");
-    console.log(summary);
-
-  } catch (e) {
-    console.error("processJSONData error:", e);
-    showMessage("❌ JSON processing failed", "error");
-  }
+const entry = {
+code,
+company: bowl.company || bowl.companyName || "",
+customer: bowl.customer || bowl.customerName || "",
+dish: bowl.dish || bowl.dishLetter || "",
+timestamp: new Date().toISOString(),
 };
 
 
-        // auto-sync and update UI
+processed.push(entry);
+}
+
+
+// Update appData
+window.appData = window.appData || {};
+window.appData.activeBowls = processed;
+
+
+// Sync to Firebase (real-time update)
+const db = firebase.database();
+await db.ref("progloveData/activeBowls").set(processed);
+
+
+console.log(`✅ ${processed.length} bowls uploaded to Firebase.`);
+showMessage(`✅ ${processed.length} bowls synced to cloud`, "success");
+} catch (e) {
+console.error("processJSONData error:", e);
+showMessage("❌ JSON processing failed", "error");
+}
+};
+
+// auto-sync and update UI
         syncToFirebase();
         updateDisplay();
         updateOvernightStats();
