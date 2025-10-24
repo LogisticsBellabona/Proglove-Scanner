@@ -805,43 +805,46 @@ window.exportAllData = async function () {
 };
 // ------------------- JSON PATCH PROCESSING (UPDATED) -------------------
 window.processJSONData = function processJSONData(raw) {
-    try {
-        let parsed = (typeof raw === 'string') ? JSON.parse(raw) : raw;
- 
-        // Normalize structure: find array of boxes or deliveries
-        let boxes = [];
-        if (Array.isArray(parsed)) boxes = parsed;
-        else if (parsed.boxes && Array.isArray(parsed.boxes)) boxes = parsed.boxes;
-        else if (parsed.deliveries && Array.isArray(parsed.deliveries)) boxes = parsed.deliveries;
-        else boxes = [parsed];
-
-        saveToLocal();
-        syncToFirebase();
-
-        const patchResultsEl = document.getElementById("patchResults");
-        const patchSummaryEl = document.getElementById("patchSummary");
-        const failedEl = document.getElementById("failedMatches");
-
-        if (patchResultsEl) patchResultsEl.style.display = "block";
-        if (patchSummaryEl)
-            patchSummaryEl.textContent =
-                "Updated: " + updated + " • Created: " + added;
-        if (failedEl)
-            failedEl.innerHTML = "<em>Processing finished successfully.</em>";
-
-        showMessage(
-            "✅ JSON processed successfully: " + (updated + added) + " bowls",
-            "success"
-        );
-    } catch (e) {
-        console.error("processJSONData:", e);
-        // More specific error message if it's likely a JSON parse issue
-        if (e instanceof SyntaxError) {
-             showMessage("❌ Invalid JSON format. Please check the pasted text.", "error");
-        } else {
-             showMessage("❌ JSON processing error: " + e.message, "error");
-        }
+  try {
+    if (!raw) {
+      showMessage("❌ No JSON data provided to process.", "error");
+      console.warn("processJSONData called with:", raw);
+      return;
     }
+
+    let parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+
+    // Normalize structure: find array of boxes or deliveries
+    let boxes = [];
+    if (Array.isArray(parsed)) boxes = parsed;
+    else if (parsed.boxes && Array.isArray(parsed.boxes)) boxes = parsed.boxes;
+    else if (parsed.deliveries && Array.isArray(parsed.deliveries)) boxes = parsed.deliveries;
+    else boxes = [parsed];
+
+    console.log("Parsed boxes:", boxes);
+
+    saveToLocal();
+    syncToFirebase();
+
+    const patchResultsEl = document.getElementById("patchResults");
+    const patchSummaryEl = document.getElementById("patchSummary");
+    const failedEl = document.getElementById("failedMatches");
+
+    if (patchResultsEl) patchResultsEl.style.display = "block";
+    if (patchSummaryEl)
+      patchSummaryEl.textContent = "Updated: " + boxes.length;
+    if (failedEl)
+      failedEl.innerHTML = "<em>Processing finished successfully.</em>";
+
+    showMessage("✅ JSON processed successfully: " + boxes.length + " boxes", "success");
+  } catch (e) {
+    console.error("processJSONData:", e);
+    if (e instanceof SyntaxError) {
+      showMessage("❌ Invalid JSON format. Please check the pasted text.", "error");
+    } else {
+      showMessage("❌ JSON processing error: " + e.message, "error");
+    }
+  }
 };
 
 
