@@ -36,15 +36,15 @@ const USERS = [
     {name: "Adesh", role: "Return"}
 ];
 
-// ✅ Correct Firebase Config for proglove-bowl-tracker
-const firebaseConfig = {
-  apiKey: "...",
-  authDomain: "proglove-bowl-tracker.firebaseapp.com",
-  databaseURL: "https://proglove-bowl-tracker-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "proglove-bowl-tracker",
-  storageBucket: "proglove-bowl-tracker.appspot.com",  // adjust bucket if needed
-  messagingSenderId: "280001054969",
-  appId: "1:280001054969:web:a0792a228ea2f1c5c9ba28"
+// Firebase config (keeps your existing project)
+var firebaseConfig = {
+    apiKey: "AIzaSyCL3hffCHosBceIRGR1it2dYEDb3uxIrJw",
+    authDomain: "proglove-scanner.firebaseapp.com",
+    databaseURL: "https://proglove-scanner-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "proglove-scanner",
+    storageBucket: "proglove-scanner.firebasestorage.app",
+    messagingSenderId: "177575768177",
+    appId: "1:177575768177:web:0a0acbf222218e0c0b2bd0"
 };
 
 // ------------------- UTILITIES -------------------
@@ -218,7 +218,8 @@ function syncToFirebase() {
             .then(function() {
                 window.appData.lastSync = nowISO();
                 saveToLocal();
-                document.getElementById('lastSyncInfo').innerText = 'Last sync: ' + new Date(window.appData.lastSync).toLocaleString();
+                var el = document.getElementById('lastSyncInfo');
+                if (el) el.innerText = 'Last sync: ' + new Date(window.appData.lastSync).toLocaleString();
                 showMessage('✅ Synced to cloud', 'success');
             })
             .catch(function(err){
@@ -294,7 +295,6 @@ function displayScanResult(result) {
 
     var inputEl = document.getElementById('scanInput');
     if (!inputEl) return;
-    var className = (result.type === 'error') ? 'error' : 'success';
     // simple colored border effect
     if (result.type === 'error') {
         inputEl.style.borderColor = 'var(--accent-red)';
@@ -457,7 +457,8 @@ window.setMode = function(mode) {
     if (dishWrap) {
         dishWrap.style.display = (mode === 'kitchen') ? 'block' : 'none';
     }
-    document.getElementById('modeDisplay').innerText = 'Mode: ' + (mode ? mode.toUpperCase() : 'N/A');
+    var md = document.getElementById('modeDisplay');
+    if (md) md.innerText = 'Mode: ' + (mode ? mode.toUpperCase() : 'N/A');
     initializeUsersDropdown();
     loadDishOptions();
     updateDisplay();
@@ -476,7 +477,10 @@ window.selectDishLetter = function() {
     var dd = document.getElementById('dishSelect');
     if (!dd) return;
     window.appData.dishLetter = dd.value || null;
-    if (window.appData.dishLetter) document.getElementById('myDishLetter').innerText = window.appData.dishLetter;
+    if (window.appData.dishLetter) {
+        var myDish = document.getElementById('myDishLetter');
+        if (myDish) myDish.innerText = window.appData.dishLetter;
+    }
     updateDisplay();
 };
 
@@ -542,7 +546,9 @@ function updateDisplay() {
         if (returnedEl) returnedEl.innerText = returnedToday;
 
         var myScans = (window.appData.myScans || []).filter(function(s){
-            return s.user === window.appData.user && new Date(s.timestamp).toLocaleDateString('en-GB') === today;
+            try {
+                return s.user === window.appData.user && new Date(s.timestamp).toLocaleDateString('en-GB') === today;
+            } catch(e) { return false; }
         }).length;
         var myScansEl = document.getElementById('myScansCount');
         if (myScansEl) myScansEl.innerText = myScans;
@@ -632,24 +638,6 @@ function bindScannerInput() {
 // Make sure XLSX library is loaded from CDN before this file:
 // <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-function showMessage(msg, type) {
-    const el = document.getElementById('messageContainer');
-    if (!el) return;
-    const m = document.createElement('div');
-    m.textContent = msg;
-    m.style.padding = '10px';
-    m.style.borderRadius = '6px';
-    m.style.marginTop = '8px';
-    m.style.color = '#fff';
-    m.style.background =
-        type === 'success' ? '#065f46' :
-        type === 'error'   ? '#7f1d1d' :
-        type === 'warning' ? '#92400e' : '#1f2937';
-    el.appendChild(m);
-    setTimeout(() => m.remove(), 4000);
-}
-
-// ---------- Universal Excel Export Helper ----------
 function exportToExcel(sheetName, dataArray, filename) {
     if (!dataArray || dataArray.length === 0) {
         showMessage("❌ No data to export.", "error");
@@ -804,38 +792,243 @@ window.exportAllData = async function () {
     }
 };
 
-// ------------------- JSON PATCH PROCESSING (UPDATED) -------------------
-window.processJSONData = function processJSONData(raw) {
-  try {
-    if (!raw) {
-      const textarea = document.getElementById('jsonData');
-      raw = textarea ? textarea.value.trim() : "";
+// ------------------- Helpers for JSON processing -------------------
+function isValidBowlUrl(str) {
+    if (!str || typeof str !== "string") return false;
+    let s = str.trim();
+    return (
+        s.startsWith("http://vyt") ||
+        s.startsWith("https://vyt") ||
+        s.startsWith("http://vytal") ||
+        s.startsWith("https://vytal")
+    );
+}
+
+// Extract candidate codes from various box/dish structures
+function extractCodesFromObject(obj) {
+    var codes = [];
+    if (!obj) return codes;
+
+    // Common direct fields
+    if (obj.code && typeof obj.code === 'string') codes.push(obj.code.trim());
+    if (obj.id && typeof obj.id === 'string') codes.push(obj.id.trim());
+    if (obj.boxId && typeof obj.boxId === 'string') codes.push(obj.boxId.trim());
+    if (obj.bowlCode && typeof obj.bowlCode === 'string') codes.push(obj.bowlCode.trim());
+    if (obj.bowl_id && typeof obj.bowl_id === 'string') codes.push(obj.bowl_id.trim());
+    if (obj.uniqueIdentifier && typeof obj.uniqueIdentifier === 'string') codes.push(obj.uniqueIdentifier.trim());
+
+    // Arrays
+    if (Array.isArray(obj.bowlCodes)) {
+        obj.bowlCodes.forEach(c => { if (typeof c === 'string') codes.push(c.trim()); });
+    }
+    if (Array.isArray(obj.codes)) {
+        obj.codes.forEach(c => { if (typeof c === 'string') codes.push(c.trim()); });
     }
 
-    if (!raw) {
-      showMessage("❌ No JSON data provided.", "error");
-      return;
+    // In some payloads, dish.bowlCodes exists
+    if (obj.dishes && Array.isArray(obj.dishes)) {
+        obj.dishes.forEach(function(d){
+            if (d.bowlCodes && Array.isArray(d.bowlCodes)) d.bowlCodes.forEach(c => { if (typeof c === 'string') codes.push(c.trim()); });
+            if (d.bowlCode && typeof d.bowlCode === 'string') codes.push(d.bowlCode.trim());
+        });
     }
 
-    let parsed = JSON.parse(raw);
+    // Ensure uniqueness
+    return codes.filter(Boolean);
+}
 
-    let boxes = [];
-    if (Array.isArray(parsed)) boxes = parsed;
-    else if (parsed.boxes && Array.isArray(parsed.boxes)) boxes = parsed.boxes;
-    else if (parsed.deliveries && Array.isArray(parsed.deliveries)) boxes = parsed.deliveries;
-    else boxes = [parsed];
+// ------------------- JSON PATCH PROCESSING (FINAL) -------------------
+// This enforces:
+// - Only full URLs that start with http(s)://vyt or http(s)://vytal are accepted
+// - Exact full string match against preparedBowls to move -> activeBowls
+// - If not in prepared, create new active bowl (only if valid URL)
+// - If the same bowl appears more than once in the same incoming batch -> ERROR and abort
+window.processJSONData = function () {
+    try {
+        const raw = document.getElementById("jsonData").value?.trim();
+        if (!raw) {
+            showMessage("❌ Paste JSON first", "error");
+            return;
+        }
 
-    console.log("✅ Parsed boxes:", boxes);
+        let parsed;
+        try {
+            parsed = JSON.parse(raw);
+        } catch (e) {
+            console.error("JSON parse error:", e);
+            showMessage("❌ Invalid JSON format", "error");
+            return;
+        }
 
-    saveToLocal();
-    syncToFirebase();
-    showMessage("✅ JSON processed successfully!", "success");
-  } catch (e) {
-    console.error("processJSONData:", e);
-    showMessage("❌ Invalid or unsupported JSON.", "error");
-  }
+        // Normalize input into an array of items to inspect
+        let containers = [];
+        if (Array.isArray(parsed)) {
+            containers = parsed.slice(); // array of items
+        } else if (parsed.companies && Array.isArray(parsed.companies)) {
+            containers = parsed.companies.slice();
+        } else if (parsed.boxes && Array.isArray(parsed.boxes)) {
+            // wrap into a single container with boxes
+            containers = [{ boxes: parsed.boxes }];
+        } else if (parsed.deliveries && Array.isArray(parsed.deliveries)) {
+            containers = parsed.deliveries.slice();
+        } else {
+            containers = [parsed];
+        }
+
+        // First pass: flatten all candidate codes from the whole batch and detect duplicate entries in the batch
+        const batchCodes = []; // preserve order
+        containers.forEach(function(cont){
+            // If container itself contains boxes array
+            if (cont && Array.isArray(cont.boxes)) {
+                cont.boxes.forEach(function(box){
+                    const codes = extractCodesFromObject(box);
+                    if (codes.length) {
+                        codes.forEach(c => batchCodes.push({ code: c, meta: { container: cont, box: box } }));
+                    }
+                    // Also support nested dishes inside box (users/dishes)
+                    if (box.dishes && Array.isArray(box.dishes)) {
+                        box.dishes.forEach(function(dish){
+                            if (dish.bowlCodes && Array.isArray(dish.bowlCodes)) {
+                                dish.bowlCodes.forEach(c => batchCodes.push({ code: c, meta: { container: cont, dish: dish, box: box } }));
+                            }
+                        });
+                    }
+                });
+            } else {
+                // container might be a simple object with codes or bowlCodes or nested dishes
+                const codes = extractCodesFromObject(cont);
+                if (codes.length) {
+                    codes.forEach(c => batchCodes.push({ code: c, meta: { container: cont } }));
+                }
+                if (cont.dishes && Array.isArray(cont.dishes)) {
+                    cont.dishes.forEach(function(dish){
+                        if (dish.bowlCodes && Array.isArray(dish.bowlCodes)) {
+                            dish.bowlCodes.forEach(c => batchCodes.push({ code: c, meta: { container: cont, dish: dish } }));
+                        }
+                    });
+                }
+            }
+        });
+
+        if (batchCodes.length === 0) {
+            showMessage("❌ No bowl codes found in JSON", "error");
+            return;
+        }
+
+        // Detect duplicates within the incoming batch (exact full-string duplicates)
+        const seen = new Set();
+        for (let i = 0; i < batchCodes.length; i++) {
+            const c = batchCodes[i].code;
+            if (seen.has(c)) {
+                console.error("Duplicate in same batch:", c);
+                showMessage("❌ Duplicate bowl in same batch detected: " + c, "error");
+                return; // Abort processing on duplicate (per your instruction)
+            }
+            seen.add(c);
+        }
+
+        // Now process each code (order preserved)
+        let added = 0, updated = 0, moved = 0, ignored = 0;
+        const today = todayDateStr();
+
+        batchCodes.forEach(function(entry){
+            const rawCode = entry.code;
+            if (!rawCode || typeof rawCode !== 'string') { ignored++; return; }
+
+            const code = rawCode.trim();
+
+            // Only accept full URLs that start with allowed prefixes
+            if (!isValidBowlUrl(code)) {
+                // ignore silently as per instructions (non-VYT/VYTAL)
+                ignored++;
+                return;
+            }
+
+            // Try to find exact match in preparedBowls (exact full string match)
+            const preparedIndex = window.appData.preparedBowls.findIndex(b => b.code === code);
+
+            if (preparedIndex !== -1) {
+                // Move from prepared -> active
+                const pb = window.appData.preparedBowls.splice(preparedIndex, 1)[0];
+
+                // enrich pb with info from JSON if present (container/box/dish meta)
+                let meta = entry.meta || {};
+                // attempt to extract company/customer from container/box/dish
+                let company = (meta.container && meta.container.name) || (meta.container && meta.container.company) || pb.company || "Unknown";
+                let customer = (meta.dish && meta.dish.users && meta.dish.users.length > 0) ? meta.dish.users.map(u=>u.username || u).join(", ") : (meta.box && meta.box.customer) || pb.customer || "Unknown";
+
+                const activeObj = {
+                    code: code,
+                    dish: pb.dish || (meta.dish && meta.dish.label) || "",
+                    user: pb.user || "Unknown",
+                    company: company,
+                    customer: customer,
+                    creationDate: pb.timestamp || nowISO(),
+                    timestamp: nowISO(),
+                    status: "ACTIVE"
+                };
+
+                window.appData.activeBowls.push(activeObj);
+                moved++;
+            } else {
+                // See if already active
+                let existing = window.appData.activeBowls.find(b => b.code === code);
+                if (existing) {
+                    // Update fields from JSON meta if available
+                    let meta = entry.meta || {};
+                    existing.company = (meta.container && (meta.container.name || meta.container.company)) || existing.company || "Unknown";
+                    existing.customer = existing.customer || ((meta.dish && meta.dish.users && meta.dish.users.length>0) ? meta.dish.users.map(u=>u.username||u).join(", ") : existing.customer) || existing.customer || "Unknown";
+                    existing.creationDate = existing.creationDate || today;
+                    existing.timestamp = existing.timestamp || nowISO();
+                    updated++;
+                } else {
+                    // Create new active bowl
+                    let meta = entry.meta || {};
+                    let company = (meta.container && (meta.container.name || meta.container.company)) || "Unknown";
+                    let customer = (meta.dish && meta.dish.users && meta.dish.users.length > 0) ? meta.dish.users.map(u=>u.username||u).join(", ") : (meta.box && meta.box.customer) || "Unknown";
+
+                    const newActive = {
+                        code: code,
+                        dish: (meta.dish && meta.dish.label) || "",
+                        user: "UNKNOWN",
+                        company: company,
+                        customer: customer,
+                        creationDate: today,
+                        timestamp: nowISO(),
+                        status: "ACTIVE"
+                    };
+
+                    window.appData.activeBowls.push(newActive);
+                    added++;
+                }
+            }
+        });
+
+        // persist and update UI
+        saveToLocal();
+        syncToFirebase();
+        updateDisplay();
+        updateOvernightStats();
+
+        // Update patch results UI if present
+        const patchResultsEl = document.getElementById("patchResults");
+        const patchSummaryEl = document.getElementById("patchSummary");
+        const failedEl = document.getElementById("failedMatches");
+
+        if (patchResultsEl) patchResultsEl.style.display = "block";
+        if (patchSummaryEl)
+            patchSummaryEl.textContent =
+                "Moved: " + moved + " • Updated: " + updated + " • Created: " + added + " • Ignored: " + ignored;
+        if (failedEl)
+            failedEl.innerHTML = "<em>Processing finished.</em>";
+
+        showMessage("✅ JSON processed: moved " + moved + " • created " + added + " • updated " + updated, "success");
+
+    } catch (e) {
+        console.error("processJSONData:", e);
+        showMessage("❌ JSON parse or import error", "error");
+    }
 };
-
 
 // reset placeholder
 window.resetTodaysPreparedBowls = function() {
@@ -878,4 +1071,3 @@ document.addEventListener('DOMContentLoaded', function(){
         initializeUI();
     }
 });
-
