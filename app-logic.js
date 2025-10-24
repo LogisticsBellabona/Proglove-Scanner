@@ -904,6 +904,44 @@ window.resetTodaysPreparedBowls = function() {
     updateDisplay();
     showMessage('✅ Today\'s prepared bowls cleared', 'success');
 };
+// ✅ Place this helper function at the bottom of your `app-logic.js` (before the last `</script>` tag)
+
+// --------------------------------------------------------
+// Extract all VYT codes (http://vyt.to/... or https://vyt.to/...) from ANY JSON object
+// --------------------------------------------------------
+function extractAllVytCodes(obj) {
+  const codes = new Set();
+
+  function scan(value) {
+    if (!value) return;
+
+    // If it's a string, check for vyt.to pattern
+    if (typeof value === 'string') {
+      const matches = value.match(/https?:\/\/vyt\.to\/[A-Za-z0-9_-]+/gi);
+      if (matches) {
+        matches.forEach((m) => codes.add(m.toLowerCase()));
+      }
+      return;
+    }
+
+    // Recurse arrays and objects
+    if (Array.isArray(value)) {
+      value.forEach(scan);
+    } else if (typeof value === 'object') {
+      Object.values(value).forEach(scan);
+    }
+  }
+
+  scan(obj);
+  return Array.from(codes);
+}
+
+// ✅ Example usage in the browser console:
+// const parsed = JSON.parse(document.getElementById('jsonData').value);
+// const codes = extractAllVytCodes(parsed);
+// console.log('✅ Total unique bowls:', codes.length);
+// console.log(codes);
+
 
 /* =========================
    Bootstrap / UI init
