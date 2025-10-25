@@ -593,12 +593,6 @@ function bindScannerInput() {
 }
 
 // ------------------- EXPORT ALL DATA (fixed mapping to match Berlin) -------------------
-const nonVytCount = rows.filter(r => !/https?:\/\/vyt\.to\//i.test(r["Code"])).length;
-if (nonVytCount > 0) {
-  console.warn(nonVytCount + " rows do not contain vyt links in 'Code' column. Exporting anyway.");
-  showMessage("⚠️ " + nonVytCount + " rows have non-VYT codes. Check console.", "warning");
-}
-
 window.exportAllData = function () {
     try {
         const bowls = window.appData.activeBowls || [];
@@ -693,8 +687,12 @@ window.exportAllData = function () {
         console.error("❌ Export ALL failed:", err);
         showMessage("❌ Excel export failed. See console.", "error");
     }
+const nonVytCount = rows.filter(r => !/https?:\/\/vyt\.to\//i.test(r["Code"])).length;
+if (nonVytCount > 0) {
+  console.warn(nonVytCount + " rows do not contain vyt links in 'Code' column. Exporting anyway.");
+  showMessage("⚠️ " + nonVytCount + " rows have non-VYT codes. Check console.", "warning");
+}
 };
-
 
 // ------------------- JSON / BATCH IMPORT -------------------
 // robust recursive extractor for vyt.to URLs (case-insensitive)
