@@ -1,14 +1,11 @@
 /* app-logic.js
-   Firebase-only single-file app logic for ProGlove Bowl Tracker
-   - Keeps original features (scan handling, JSON import, exports, stats)
-   - Removes localStorage entirely (cloud-only)
-   - Auto-syncs every change to Firebase (progloveData)
-   - Real-time two-way sync: remote updates update local appData/UI instantly
+   Full client logic for ProGlove Bowl Tracking System
+   - Real-time sync with Firebase Realtime DB
+   - Robust JSON import (duplicate-safe)
+   - No UI design changes — only plumbing and bug fixes
 */
 
-/* =========================
-   GLOBAL STATE + CONSTS
-   ========================= */
+// ------------------- GLOBAL STATE -------------------
 window.appData = {
     mode: null,
     user: null,
@@ -24,6 +21,7 @@ window.appData = {
     lastSync: null
 };
 
+// Small user list (as in your Berlin file)
 const USERS = [
     {name: "Hamid", role: "Kitchen"},
     {name: "Richa", role: "Kitchen"},
@@ -38,26 +36,14 @@ const USERS = [
     {name: "Adesh", role: "Return"}
 ];
 
-/* =========================
-   FIREBASE CONFIG
-   (uses the new project keys you provided)
-   ========================= */
-// firebaseConfig is defined in index.html before this script loads
+// Prevent redeclaring firebaseConfig here (index.html already initialized firebase).
+// If needed, firebase.app().options can be inspected in code.
 
-/* =========================
-   UTILITIES
-   ========================= */
-function nowISO() { return (new Date()).toISOString(); }
-function todayDateStr() { return (new Date()).toLocaleDateString('en-GB'); }
-
+// ------------------- UTILITIES -------------------
 function showMessage(message, type) {
     try {
         var container = document.getElementById('messageContainer');
-        if (!container) {
-            // fallback: console
-            if (type === 'error') console.error(message); else console.log(message);
-            return;
-        }
+        if (!container) return;
         var el = document.createElement('div');
         el.style.pointerEvents = 'auto';
         el.style.background = (type === 'error') ? '#7f1d1d' : (type === 'success') ? '#064e3b' : '#1f2937';
@@ -70,51 +56,110 @@ function showMessage(message, type) {
         container.appendChild(el);
         setTimeout(function() {
             try { container.removeChild(el); } catch(e){}
-        }, 4000);
+        }, 3500);
     } catch(e){ console.error("showMessage error:",e) }
 }
 
-/* =========================
-   FIREBASE: INIT / MONITOR / REAL-TIME SYNC
-   ========================= */
-function initFirebaseAndStart() {
+function nowISO() { return (new Date()).toISOString(); }
+function todayDateStr() { return (new Date()).toLocaleDateString('en-GB'); }
+
+// ------------------- STORAGE (local fallback if needed) -------------------
+function saveToLocal() {
     try {
-        if (typeof firebase === "undefined") {
-            console.error("❌ Firebase SDK not loaded — check script includes.");
+        var toSave = {
+            activeBowls: window.appData.activeBowls,
+            preparedBowls: window.appData.preparedBowls,
+            returnedBowls: window.appData.returnedBowls,
+            myScans: window.appData.myScans,
+            scanHistory: window.appData.scanHistory,
+            customerData: window.appData.customerData,
+            lastSync: window.appData.lastSync
+        };
+        localStorage.setItem('proglove_data_v1', JSON.stringify(toSave));
+    } catch(e){ console.error("saveToLocal:", e) }
+}
+
+function loadFromLocal() {
+    try {
+        var raw = localStorage.getItem('proglove_data_v1');
+        if (!raw) return;
+        var parsed = JSON.parse(raw);
+        window.appData.activeBowls = parsed.activeBowls || [];
+        window.appData.preparedBowls = parsed.preparedBowls || [];
+        window.appData.returnedBowls = parsed.returnedBowls || [];
+        window.appData.myScans = parsed.myScans || [];
+        window.appData.scanHistory = parsed.scanHistory || [];
+        window.appData.customerData = parsed.customerData || [];
+        window.appData.lastSync = parsed.lastSync || null;
+    } catch(e){ console.error("loadFromLocal:", e) }
+}
+
+// ------------------- FIREBASE / REALTIME -------------------
+// ensure firebase initialized (index.html initializes it). If not, bail gracefully.
+function initFirebaseRealtime() {
+    try {
+        if (typeof firebase === 'undefined') {
+            console.error("Firebase SDK not loaded — check index.html includes.");
             updateSystemStatus(false, "Firebase SDK missing");
+            loadFromLocal();
             initializeUI();
             return;
         }
 
-        if (!firebase.apps.length) {
-            firebase.initializeApp(firebaseConfig);
-            console.log("✅ Firebase initialized:", firebaseConfig.projectId);
-        } else {
+        // Choose DB path: this uses main path 'progloveData' (production). Change if needed.
+        window._db = firebase.database();
+        window._dbRef = window._db.ref('progloveData');
+
+        // Monitor connection
+        var connectedRef = window._db.ref('.info/connected');
+        connectedRef.on('value', function (snap) {
             try {
-                console.log("ℹ️ Firebase already initialized:", firebase.apps[0].options.projectId);
-            } catch(e) { console.log("ℹ️ Firebase already initialized (unknown name)"); }
-        }
+                if (snap && snap.val() === true) {
+                    updateSystemStatus(true, "✅ Firebase Connected");
+                } else {
+                    updateSystemStatus(false, "⚠️ Firebase Disconnected");
+                }
+            } catch(e){ console.warn("monitorConnection callback error:", e); }
+        });
 
-        // Attempt anonymous auth so writes are allowed when anonymous auth is enabled
-        try {
-            if (firebase.auth && typeof firebase.auth === 'function') {
-                firebase.auth().onAuthStateChanged(function(user){
-                    if (!user) {
-                        firebase.auth().signInAnonymously().catch(function(err){
-                            console.warn("Anonymous sign-in failed:", err && err.message ? err.message : err);
-                        });
-                    }
-                });
+        // Real-time data listener: keep local appData in sync when remote changes.
+        window._dbRef.on('value', function(snap){
+            try {
+                var val = snap && snap.val();
+                if (!val) {
+                    // no cloud data yet
+                    updateSystemStatus(true, '✅ Cloud Connected (no data)');
+                    // keep local
+                    initializeUI();
+                    return;
+                }
+                // merge cloud into appData (cloud is master)
+                window.appData.activeBowls = val.activeBowls || [];
+                window.appData.preparedBowls = val.preparedBowls || [];
+                window.appData.returnedBowls = val.returnedBowls || [];
+                window.appData.myScans = val.myScans || [];
+                window.appData.scanHistory = val.scanHistory || [];
+                window.appData.customerData = val.customerData || [];
+                window.appData.lastSync = val.lastSync || nowISO();
+                saveToLocal();
+                updateSystemStatus(true, '✅ Cloud data loaded');
+                updateDisplay();
+                initializeUI();
+            } catch (e) {
+                console.error("Realtime value handler error:", e);
             }
-        } catch(e){ console.warn("Auth init warning:", e); }
+        }, function(err){
+            console.error("Realtime listener failed:", err);
+            updateSystemStatus(false, '⚠️ Cloud listener failed');
+            loadFromLocal();
+            initializeUI();
+        });
 
-        monitorConnection();
-        attachRealtimeListener();
-        loadFromFirebaseOnce();
-
+        console.log("⏳ Firebase realtime initialized.");
     } catch (e) {
-        console.error("❌ initFirebaseAndStart error:", e);
-        updateSystemStatus(false, "Firebase init failed");
+        console.error("initFirebaseRealtime error:", e);
+        updateSystemStatus(false, "Firebase init failed — using local data");
+        loadFromLocal();
         initializeUI();
     }
 }
@@ -131,104 +176,13 @@ function updateSystemStatus(connected, text) {
     }
 }
 
-function monitorConnection() {
+// Push full appData to Firebase (atomic set)
+function pushFullToFirebase() {
     try {
-        if (!firebase.apps.length) {
-            console.warn("⚠️ monitorConnection skipped — Firebase not initialized");
+        if (!window._dbRef) {
+            console.warn("pushFullToFirebase skipped: DB not ready");
             return;
         }
-        var db = firebase.database();
-        if (!db) {
-            console.warn("⚠️ monitorConnection — database unavailable");
-            return;
-        }
-        var connectedRef = db.ref(".info/connected");
-        connectedRef.on("value", function (snap) {
-            try {
-                if (snap && snap.val() === true) {
-                    updateSystemStatus(true, "✅ Firebase Connected");
-                } else {
-                    updateSystemStatus(false, "⚠️ Firebase Disconnected");
-                }
-            } catch(e){ console.warn("monitorConnection callback error:", e); }
-        });
-    } catch (e) {
-        console.error("❌ monitorConnection failed:", e);
-        updateSystemStatus(false, "Connection monitor unavailable");
-    }
-}
-
-// load once initially
-function loadFromFirebaseOnce() {
-    try {
-        var db = firebase.database();
-        var ref = db.ref('progloveData');
-        ref.once('value').then(function(snapshot) {
-            if (snapshot && snapshot.exists && snapshot.exists()) {
-                var val = snapshot.val() || {};
-                // replace lists with cloud values
-                window.appData.activeBowls = val.activeBowls || window.appData.activeBowls || [];
-                window.appData.preparedBowls = val.preparedBowls || window.appData.preparedBowls || [];
-                window.appData.returnedBowls = val.returnedBowls || window.appData.returnedBowls || [];
-                window.appData.myScans = val.myScans || window.appData.myScans || [];
-                window.appData.scanHistory = val.scanHistory || window.appData.scanHistory || [];
-                window.appData.customerData = val.customerData || window.appData.customerData || [];
-                window.appData.lastSync = val.lastSync || nowISO();
-                updateSystemStatus(true);
-                showMessage('✅ Cloud data loaded', 'success');
-            } else {
-                updateSystemStatus(true, '✅ Cloud Connected (no data)');
-            }
-            initializeUI();
-            updateDisplay();
-        }).catch(function(err){
-            console.error("Firebase read failed:", err);
-            updateSystemStatus(false, '⚠️ Cloud load failed');
-            initializeUI();
-        });
-    } catch (e) {
-        console.error("loadFromFirebase error:", e);
-        updateSystemStatus(false, '⚠️ Firebase error');
-        initializeUI();
-    }
-}
-
-// attach real-time two-way listener
-function attachRealtimeListener() {
-    try {
-        var db = firebase.database();
-        var ref = db.ref('progloveData');
-        ref.on('value', function(snapshot){
-            try {
-                if (!snapshot || !snapshot.exists()) {
-                    // no cloud data yet
-                    return;
-                }
-                var val = snapshot.val() || {};
-                // replace the important arrays with cloud state to keep in sync
-                window.appData.activeBowls = val.activeBowls || [];
-                window.appData.preparedBowls = val.preparedBowls || [];
-                window.appData.returnedBowls = val.returnedBowls || [];
-                window.appData.myScans = val.myScans || [];
-                window.appData.scanHistory = val.scanHistory || [];
-                window.appData.customerData = val.customerData || [];
-                window.appData.lastSync = val.lastSync || nowISO();
-                updateDisplay();
-                updateOvernightStats();
-                console.log("🔁 Real-time update applied from cloud.");
-            } catch(e) {
-                console.warn("Realtime listener handler error:", e);
-            }
-        });
-    } catch(e) {
-        console.warn("Could not attach realtime listener:", e);
-    }
-}
-
-function syncToFirebase() {
-    try {
-        if (typeof firebase === 'undefined') return;
-        var db = firebase.database();
         var payload = {
             activeBowls: window.appData.activeBowls || [],
             preparedBowls: window.appData.preparedBowls || [],
@@ -238,21 +192,23 @@ function syncToFirebase() {
             customerData: window.appData.customerData || [],
             lastSync: nowISO()
         };
-        db.ref('progloveData').update(payload).then(function(){
-            window.appData.lastSync = payload.lastSync;
-            console.log("✅ Synced to Firebase:", payload.lastSync);
-        }).catch(function(err){
-            console.error("❌ Firebase sync failed:", err);
-            showMessage("⚠️ Sync failed", "error");
-        });
-    } catch (e) {
-        console.error("syncToFirebase error:", e);
-    }
+        window._dbRef.set(payload)
+            .then(function(){ console.log('✅ Auto-synced full data to Firebase'); })
+            .catch(function(err){ console.error('❌ Full sync error:', err); });
+    } catch (e) { console.error('pushFullToFirebase error:',e); }
 }
 
-/* =========================
-   SCAN HANDLING (unchanged behavior, auto-sync on state change)
-   ========================= */
+// Partial update (safe)
+function updatePartialToFirebase(partial) {
+    try {
+        if (!window._dbRef) { console.warn("updatePartialToFirebase: DB not ready"); return; }
+        window._dbRef.update(partial)
+            .then(function(){ console.log('✅ Partial update to Firebase'); })
+            .catch(function(err){ console.error('❌ Partial update error:', err); });
+    } catch(e) { console.error('updatePartialToFirebase error:', e); }
+}
+
+// ------------------- SCAN HANDLING -------------------
 function handleScanInputRaw(rawInput) {
     var startTime = Date.now();
     var result = { message: '', type: 'error', responseTime: 0 };
@@ -267,7 +223,6 @@ function handleScanInputRaw(rawInput) {
             return result;
         }
 
-        // detect/create vytInfo
         var vytInfo = detectVytCode(input);
         if (!vytInfo) {
             result.message = '❌ Invalid VYT code/URL: ' + input;
@@ -277,7 +232,6 @@ function handleScanInputRaw(rawInput) {
             return result;
         }
 
-        // route by mode
         var mode = window.appData.mode || '';
         if (mode === 'kitchen') {
             result = kitchenScanClean(vytInfo, startTime);
@@ -289,7 +243,6 @@ function handleScanInputRaw(rawInput) {
             result.responseTime = Date.now() - startTime;
         }
 
-        // final UI update
         displayScanResult(result);
         updateDisplay();
         updateOvernightStats();
@@ -311,12 +264,9 @@ function displayScanResult(result) {
         var resp = document.getElementById('responseTimeValue');
         if (resp) resp.textContent = (result.responseTime || '') + ' ms';
     } catch(e){}
-
     showMessage(result.message, result.type);
-
     var inputEl = document.getElementById('scanInput');
     if (!inputEl) return;
-    // simple colored border effect
     if (result.type === 'error') {
         inputEl.style.borderColor = 'var(--accent-red)';
         setTimeout(function(){ inputEl.style.borderColor = ''; }, 1800);
@@ -326,11 +276,9 @@ function displayScanResult(result) {
     }
 }
 
-// detect vyt code pattern (safe)
 function detectVytCode(input) {
     if (!input || typeof input !== 'string') return null;
     var cleaned = input.trim();
-    // common patterns (supports full URL or bare code)
     var urlPattern = /(https?:\/\/[^\s]+)/i;
     var vytPattern = /(VYT\.TO\/[^\s]+)|(vyt\.to\/[^\s]+)|(VYTAL[^\s]+)|(vytal[^\s]+)/i;
     var matchUrl = cleaned.match(urlPattern);
@@ -339,10 +287,8 @@ function detectVytCode(input) {
     }
     var match = cleaned.match(vytPattern);
     if (match) {
-        // return the whole input as code
         return { fullUrl: cleaned };
     }
-    // fallback: if string length looks like a code (>=6)
     if (cleaned.length >= 6 && cleaned.length <= 120) return { fullUrl: cleaned };
     return null;
 }
@@ -351,7 +297,6 @@ function detectVytCode(input) {
 function kitchenScanClean(vytInfo, startTime) {
     startTime = startTime || Date.now();
     var today = todayDateStr();
-    // check duplicate for this user/dish today
     var already = window.appData.preparedBowls.some(function(b){
         return b.code === vytInfo.fullUrl && b.date === today && b.user === window.appData.user && b.dish === window.appData.dishLetter;
     });
@@ -359,7 +304,6 @@ function kitchenScanClean(vytInfo, startTime) {
         return { message: '❌ Already prepared today: ' + vytInfo.fullUrl, type: 'error', responseTime: Date.now() - startTime };
     }
 
-    // if active bowl exists remove it (customer data reset)
     var idxActive = -1;
     for (var i = 0; i < window.appData.activeBowls.length; i++) {
         if (window.appData.activeBowls[i].code === vytInfo.fullUrl) { idxActive = i; break; }
@@ -392,8 +336,8 @@ function kitchenScanClean(vytInfo, startTime) {
 
     window.appData.scanHistory.unshift({ type: 'kitchen', code: vytInfo.fullUrl, user: window.appData.user, timestamp: nowISO(), message: 'Prepared: ' + vytInfo.fullUrl });
 
-    // auto-sync
-    syncToFirebase();
+    // sync
+    pushFullToFirebase();
 
     return { message: (hadCustomer ? '✅ Prepared (customer reset): ' : '✅ Prepared: ') + vytInfo.fullUrl, type: 'success', responseTime: Date.now() - startTime };
 }
@@ -438,14 +382,12 @@ function returnScanClean(vytInfo, startTime) {
 
     window.appData.scanHistory.unshift({ type: 'return', code: vytInfo.fullUrl, user: window.appData.user, timestamp: nowISO(), message: 'Returned: ' + vytInfo.fullUrl });
 
-    syncToFirebase();
+    pushFullToFirebase();
 
     return { message: '✅ Returned: ' + vytInfo.fullUrl, type: 'success', responseTime: Date.now() - startTime };
 }
 
-/* =========================
-   UI: users, dish options, start/stop scanning
-   ========================= */
+// ------------------- UI INITIALIZATION & HANDLERS -------------------
 function initializeUsersDropdown() {
     try {
         var dd = document.getElementById('userSelect');
@@ -618,9 +560,7 @@ function updateLastActivity() {
     window.appData.lastActivity = Date.now();
 }
 
-/* =========================
-   Keyboard / input handlers for scanner
-   ========================= */
+// keyboard / input handlers for scanner
 function bindScannerInput() {
     try {
         var inp = document.getElementById('scanInput');
@@ -639,11 +579,9 @@ function bindScannerInput() {
                 setTimeout(function(){ inp.focus(); }, 50);
             }
         });
-        // paste / input
         inp.addEventListener('input', function(e){
             var v = inp.value.trim();
             if (!v) return;
-            // auto process if looks like VYT
             if (v.length >= 6 && (v.toLowerCase().indexOf('vyt') !== -1 || v.indexOf('/') !== -1)) {
                 if (window.appData.scanning) {
                     handleScanInputRaw(v);
@@ -654,10 +592,7 @@ function bindScannerInput() {
     } catch(e){ console.error("bindScannerInput:", e) }
 }
 
-/* =========================
-   EXPORTS (XLSX / Excel)
-   ========================= */
-// exportToExcel - supports XLSX (sheetjs) or ExcelJS if loaded
+// ------------------- EXPORTS (XLSX & ExcelJS) -------------------
 function exportToExcel(sheetName, dataArray, filename) {
     if (!dataArray || dataArray.length === 0) {
         showMessage("❌ No data to export.", "error");
@@ -665,34 +600,11 @@ function exportToExcel(sheetName, dataArray, filename) {
     }
 
     try {
-        if (window.XLSX) {
-            const wb = XLSX.utils.book_new();
-            const ws = XLSX.utils.json_to_sheet(dataArray);
-            XLSX.utils.book_append_sheet(wb, ws, sheetName);
-            XLSX.writeFile(wb, filename);
-            showMessage(`✅ Exported ${filename} successfully.`, "success");
-            return;
-        }
-        if (window.ExcelJS) {
-            (async function(){
-                const workbook = new ExcelJS.Workbook();
-                const sheet = workbook.addWorksheet(sheetName);
-                if (dataArray.length > 0) {
-                    const keys = Object.keys(dataArray[0]);
-                    sheet.columns = keys.map(k => ({ header: k, key: k, width: 20 }));
-                    dataArray.forEach(r => sheet.addRow(r));
-                }
-                const buffer = await workbook.xlsx.writeBuffer();
-                const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url; a.download = filename; a.click();
-                URL.revokeObjectURL(url);
-                showMessage("✅ Exported Excel", "success");
-            })().catch(err => { console.error(err); showMessage("❌ Export failed", "error"); });
-            return;
-        }
-        showMessage("❌ No spreadsheet library loaded (XLSX or ExcelJS)", "error");
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(dataArray);
+        XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        XLSX.writeFile(wb, filename);
+        showMessage(`✅ Exported ${filename} successfully.`, "success");
     } catch (error) {
         console.error("Excel export failed:", error);
         showMessage("❌ Excel export failed.", "error");
@@ -780,172 +692,246 @@ window.exportAllData = async function () {
             };
         });
 
-        if (window.ExcelJS) {
-            const workbook = new ExcelJS.Workbook();
-            const sheet = workbook.addWorksheet("All Bowls Data");
-            sheet.columns = [
-                { header: "Code", key: "Code", width: 25 },
-                { header: "Dish", key: "Dish", width: 15 },
-                { header: "Company", key: "Company", width: 25 },
-                { header: "Customer", key: "Customer", width: 25 },
-                { header: "Creation Date", key: "CreationDate", width: 20 },
-                { header: "Missing Days", key: "MissingDays", width: 15 },
-            ];
-            allData.forEach(item => {
-                const row = sheet.addRow(item);
-                const missingDays = parseInt(item.MissingDays, 10);
-                if (!isNaN(missingDays) && missingDays > 7) {
-                    row.getCell("MissingDays").fill = {
-                        type: "pattern",
-                        pattern: "solid",
-                        fgColor: { argb: "FFFF4C4C" },
-                    };
-                    row.getCell("MissingDays").font = { color: { argb: "FFFFFFFF" }, bold: true };
-                }
-            });
-            sheet.getRow(1).font = { bold: true, color: { argb: "FF00E0B3" } };
-            sheet.getRow(1).alignment = { horizontal: "center" };
-            const buffer = await workbook.xlsx.writeBuffer();
-            const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `ProGlove_All_Data_${new Date().toISOString().split("T")[0]}.xlsx`;
-            a.click();
-            URL.revokeObjectURL(url);
-            showMessage("✅ Excel file exported successfully!", "success");
-            return;
-        } else {
-            exportToExcel("All Data", allData, `ProGlove_All_Data_${new Date().toISOString().split("T")[0]}.xlsx`);
-        }
+        // Use XLSX for simplicity
+        exportToExcel("All Data", allData, "ProGlove_All_Data.xlsx");
     } catch (err) {
         console.error("❌ Excel export failed:", err);
         showMessage("❌ Excel export failed. Check console for details.", "error");
     }
 };
 
-// ✅ Place this inside your app-logic.js (replace the old processJSONData)
-
-window.processJSONData = async function () {
-  try {
-    const textarea = document.getElementById("jsonData");
-    if (!textarea) {
-      console.error("❌ JSON textarea not found");
-      return;
+// ------------------- JSON / BATCH IMPORT -------------------
+// robust recursive extractor for vyt.to URLs (case-insensitive)
+function extractAllVytCodes(obj) {
+    var results = new Set();
+    function recurse(v) {
+        if (!v) return;
+        if (typeof v === 'string') {
+            var re = /https?:\/\/vyt\.to\/[A-Za-z0-9_-]+/gi;
+            var matches = v.match(re);
+            if (matches) matches.forEach(function(m){ results.add(m.trim().toLowerCase()); });
+            return;
+        }
+        if (Array.isArray(v)) {
+            v.forEach(recurse); return;
+        }
+        if (typeof v === 'object') {
+            Object.values(v).forEach(recurse); return;
+        }
     }
+    recurse(obj);
+    return Array.from(results);
+}
 
-    const rawText = textarea.value.trim();
-    if (!rawText) {
-      showMessage("⚠️ Please paste JSON data first", "warning");
-      return;
-    }
-
-    let jsonData;
+// processJSONData: reads #jsonData textarea, extracts VYT codes, maps company/customer/dish if present,
+// detects duplicates within incoming batch (skips duplicates), moves prepared->active or creates new active.
+// then syncs to Firebase.
+window.processJSONData = function () {
     try {
-      jsonData = JSON.parse(rawText);
+        const raw = (document.getElementById("jsonData") && document.getElementById("jsonData").value) || "";
+        if (!raw) { showMessage("❌ Paste JSON first", "error"); return; }
+
+        let parsed;
+        try { parsed = JSON.parse(raw); } catch (e) {
+            console.error("JSON parse error:", e);
+            showMessage("❌ Invalid JSON format", "error");
+            return;
+        }
+
+        // Flatten containers into an array of objects to scan
+        var containers = [];
+        if (Array.isArray(parsed)) containers = parsed.slice();
+        else if (parsed.companies && Array.isArray(parsed.companies)) containers = parsed.companies.slice();
+        else if (parsed.boxes && Array.isArray(parsed.boxes)) containers = [{ boxes: parsed.boxes }];
+        else if (parsed.deliveries && Array.isArray(parsed.deliveries)) containers = parsed.deliveries.slice();
+        else containers = [parsed];
+
+        // collect all candidate codes from containers
+        var batchEntries = []; // { code, meta }
+        containers.forEach(function(cont){
+            // extract all vyt codes from container using recursive extractor
+            var codes = extractAllVytCodes(cont);
+            codes.forEach(function(c){
+                batchEntries.push({ code: c, meta: cont });
+            });
+
+            // also scan boxes/dishes explicitly if present
+            if (cont && Array.isArray(cont.boxes)) {
+                cont.boxes.forEach(function(box){
+                    var cb = extractAllVytCodes(box);
+                    cb.forEach(function(c){ batchEntries.push({ code: c, meta: { container: cont, box: box } }); });
+                    if (box.dishes && Array.isArray(box.dishes)) {
+                        box.dishes.forEach(function(d){
+                            var dd = extractAllVytCodes(d);
+                            dd.forEach(function(c){ batchEntries.push({ code: c, meta: { container: cont, dish: d } }); });
+                        });
+                    }
+                });
+            }
+        });
+
+        if (batchEntries.length === 0) {
+            showMessage("❌ No bowl codes found in JSON", "error");
+            return;
+        }
+
+        // Detect duplicates in incoming batch (skip duplicates, do not abort)
+        var seen = new Set();
+        var filtered = [];
+        batchEntries.forEach(function(en){
+            var codeLower = (en.code || "").toLowerCase();
+            if (!codeLower) return;
+            if (seen.has(codeLower)) {
+                console.warn("⚠️ Duplicate skipped (same bowl found twice):", codeLower);
+                return;
+            }
+            seen.add(codeLower);
+            filtered.push(en);
+        });
+
+        // Process each code
+        var added = 0, updated = 0, moved = 0, ignored = 0;
+        var today = todayDateStr();
+
+        filtered.forEach(function(entry){
+            var code = entry.code;
+            if (!code) { ignored++; return; }
+
+            // only accept vyt.to URLs (enforced)
+            if (!/https?:\/\/vyt\.to\/[A-Za-z0-9_-]+/i.test(code)) { ignored++; return; }
+
+            // find in prepared
+            var preparedIndex = (window.appData.preparedBowls || []).findIndex(function(b){ return (b.code || "").toLowerCase() === code.toLowerCase(); });
+            if (preparedIndex !== -1) {
+                var pb = window.appData.preparedBowls.splice(preparedIndex, 1)[0];
+                var meta = entry.meta || {};
+                var company = (meta.company || meta.name || pb.company) || "Unknown";
+                var customer = ( (meta.dish && meta.dish.users && Array.isArray(meta.dish.users)) ? meta.dish.users.map(function(u){ return (u.username || u.name || u).toString(); }).join(", ") : (meta.box && meta.box.customer) ) || pb.customer || "Unknown";
+                var activeObj = {
+                    code: pb.code,
+                    dish: pb.dish || (meta.dish && meta.dish.label) || "",
+                    user: pb.user || "Unknown",
+                    company: company,
+                    customer: customer,
+                    creationDate: pb.timestamp || nowISO(),
+                    timestamp: nowISO(),
+                    status: "ACTIVE"
+                };
+                window.appData.activeBowls.push(activeObj);
+                moved++;
+            } else {
+                // if already active, update metadata if possible
+                var existing = (window.appData.activeBowls || []).find(function(b){ return (b.code || "").toLowerCase() === code.toLowerCase(); });
+                if (existing) {
+                    var meta2 = entry.meta || {};
+                    existing.company = existing.company || (meta2.container && (meta2.container.name || meta2.container.company)) || existing.company || "Unknown";
+                    existing.customer = existing.customer || ( (meta2.dish && meta2.dish.users && Array.isArray(meta2.dish.users)) ? meta2.dish.users.map(function(u){ return (u.username||u.name||u).toString(); }).join(", ") : existing.customer) || existing.customer || "Unknown";
+                    existing.timestamp = existing.timestamp || nowISO();
+                    updated++;
+                } else {
+                    var meta3 = entry.meta || {};
+                    var company3 = (meta3.container && (meta3.container.name || meta3.container.company)) || "Unknown";
+                    var customer3 = (meta3.dish && meta3.dish.users && Array.isArray(meta3.dish.users)) ? meta3.dish.users.map(function(u){ return (u.username||u.name||u).toString(); }).join(", ") : (meta3.box && meta3.box.customer) || "Unknown";
+                    var newActive = {
+                        code: code,
+                        dish: (meta3.dish && (meta3.dish.label || meta3.dish.name)) || "",
+                        user: "UNKNOWN",
+                        company: company3,
+                        customer: customer3,
+                        creationDate: today,
+                        timestamp: nowISO(),
+                        status: "ACTIVE"
+                    };
+                    window.appData.activeBowls.push(newActive);
+                    added++;
+                }
+            }
+        });
+
+        // persist & sync
+        saveToLocal();
+        pushFullToFirebase();
+        updateDisplay();
+        updateOvernightStats();
+
+        var patchResultsEl = document.getElementById("patchResults");
+        var patchSummaryEl = document.getElementById("patchSummary");
+        var failedEl = document.getElementById("failedMatches");
+        if (patchResultsEl) patchResultsEl.style.display = "block";
+        if (patchSummaryEl) patchSummaryEl.textContent = "Moved: " + moved + " • Updated: " + updated + " • Created: " + added + " • Ignored: " + ignored;
+        if (failedEl) failedEl.innerHTML = "<em>Processing finished.</em>";
+
+        showMessage("✅ JSON processed: moved " + moved + " • created " + added + " • updated " + updated, "success");
     } catch (e) {
-      console.error("❌ Invalid JSON:", e);
-      showMessage("❌ Invalid JSON format", "error");
-      return;
+        console.error("processJSONData:", e);
+        showMessage("❌ JSON parse or import error", "error");
     }
-
-    if (!Array.isArray(jsonData)) {
-      showMessage("⚠️ JSON must be an array of bowls", "warning");
-      return;
-    }
-
-    const seen = new Set();
-    const processed = [];
-
-    for (const bowl of jsonData) {
-      const code = (bowl.code || bowl.vyt || bowl.id || "").trim();
-      if (!code) continue;
-
-      if (seen.has(code)) {
-        console.warn("⚠️ Duplicate skipped (same bowl found twice):", code);
-        continue; // skip duplicate
-      }
-      seen.add(code);
-
-      const entry = {
-        code,
-        company: bowl.company || bowl.companyName || "",
-        customer: bowl.customer || bowl.customerName || "",
-        dish: bowl.dish || bowl.dishLetter || "",
-        timestamp: new Date().toISOString(),
-      };
-
-      processed.push(entry);
-    }
-
-    // Update appData
-    window.appData = window.appData || {};
-    window.appData.activeBowls = processed;
-
-    // Sync to Firebase (real-time update)
-    const db = firebase.database();
-    await db.ref("progloveData/activeBowls").set(processed);
-
-    console.log(`✅ ${processed.length} bowls uploaded to Firebase.`);
-    showMessage(`✅ ${processed.length} bowls synced to cloud`, "success");
-  } catch (e) {
-    console.error("processJSONData error:", e);
-    showMessage("❌ JSON processing failed", "error");
-  }
 };
 
-/* =========================
-   Reset / helpers
-   ========================= */
+// reset today's prepared bowls
 window.resetTodaysPreparedBowls = function() {
     var today = todayDateStr();
     window.appData.preparedBowls = (window.appData.preparedBowls || []).filter(function(b){ return b.date !== today; });
-    syncToFirebase();
+    pushFullToFirebase();
     updateDisplay();
     showMessage('✅ Today\'s prepared bowls cleared', 'success');
 };
-// ✅ Place this helper function at the bottom of your `app-logic.js` (before the last `</script>` tag)
 
-// --------------------------------------------------------
-// Extract all VYT codes (http://vyt.to/... or https://vyt.to/...) from ANY JSON object
-// --------------------------------------------------------
-function extractAllVytCodes(obj) {
-  const codes = new Set();
-
-  function scan(value) {
-    if (!value) return;
-
-    // If it's a string, check for vyt.to pattern
-    if (typeof value === 'string') {
-      const matches = value.match(/https?:\/\/vyt\.to\/[A-Za-z0-9_-]+/gi);
-      if (matches) {
-        matches.forEach((m) => codes.add(m.toLowerCase()));
-      }
-      return;
+// ------------------- JSON IMPORT/EXTRACT HELPERS (EXPOSED) -------------------
+function extractCodesFromObject(obj) {
+    var codes = [];
+    if (!obj) return codes;
+    if (obj.code && typeof obj.code === 'string') codes.push(obj.code.trim());
+    if (obj.id && typeof obj.id === 'string') codes.push(obj.id.trim());
+    if (obj.boxId && typeof obj.boxId === 'string') codes.push(obj.boxId.trim());
+    if (obj.bowlCode && typeof obj.bowlCode === 'string') codes.push(obj.bowlCode.trim());
+    if (obj.bowl_id && typeof obj.bowl_id === 'string') codes.push(obj.bowl_id.trim());
+    if (obj.uniqueIdentifier && typeof obj.uniqueIdentifier === 'string') codes.push(obj.uniqueIdentifier.trim());
+    if (Array.isArray(obj.bowlCodes)) obj.bowlCodes.forEach(c => { if (typeof c === 'string') codes.push(c.trim()); });
+    if (Array.isArray(obj.codes)) obj.codes.forEach(c => { if (typeof c === 'string') codes.push(c.trim()); });
+    if (obj.dishes && Array.isArray(obj.dishes)) {
+        obj.dishes.forEach(function(d){
+            if (d.bowlCodes && Array.isArray(d.bowlCodes)) d.bowlCodes.forEach(c => { if (typeof c === 'string') codes.push(c.trim()); });
+            if (d.bowlCode && typeof d.bowlCode === 'string') codes.push(d.bowlCode.trim());
+        });
     }
-
-    // Recurse arrays and objects
-    if (Array.isArray(value)) {
-      value.forEach(scan);
-    } else if (typeof value === 'object') {
-      Object.values(value).forEach(scan);
-    }
-  }
-
-  scan(obj);
-  return Array.from(codes);
+    return codes.filter(Boolean);
 }
 
-// ✅ Example usage in the browser console:
-// const parsed = JSON.parse(document.getElementById('jsonData').value);
-// const codes = extractAllVytCodes(parsed);
-// console.log('✅ Total unique bowls:', codes.length);
-// console.log(codes);
+// ------------------- PROCESS JSON PATCH (already defined above as processJSONData) -------------------
 
+// ------------------- BOOTSTRAP & INPUT BINDING -------------------
+function bindScannerInput() {
+    try {
+        var inp = document.getElementById('scanInput');
+        if (!inp) return;
+        inp.addEventListener('keydown', function(e){
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                var val = inp.value.trim();
+                if (!val) return;
+                if (!window.appData.scanning) {
+                    showMessage('❌ Scanning not active', 'error');
+                    return;
+                }
+                handleScanInputRaw(val);
+                inp.value = '';
+                setTimeout(function(){ inp.focus(); }, 50);
+            }
+        });
+        inp.addEventListener('input', function(e){
+            var v = inp.value.trim();
+            if (!v) return;
+            if (v.length >= 6 && (v.toLowerCase().indexOf('vyt') !== -1 || v.indexOf('/') !== -1)) {
+                if (window.appData.scanning) {
+                    handleScanInputRaw(v);
+                    inp.value = '';
+                }
+            }
+        });
+    } catch(e){ console.error("bindScannerInput:", e) }
+}
 
-/* =========================
-   Bootstrap / UI init
-   ========================= */
 function initializeUI() {
     try {
         initializeUsersDropdown();
@@ -963,3 +949,14 @@ function initializeUI() {
         });
     } catch(e){ console.error("initializeUI:", e) }
 }
+
+// ------------------- STARTUP -------------------
+document.addEventListener('DOMContentLoaded', function(){
+    try {
+        initFirebaseRealtime();
+    } catch(e) {
+        console.error("startup error:", e);
+        loadFromLocal();
+        initializeUI();
+    }
+});
