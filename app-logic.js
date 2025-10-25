@@ -694,173 +694,85 @@ if (nonVytCount > 0) {
 }
 };
 
-// ------------------- JSON / BATCH IMPORT -------------------
-// robust recursive extractor for vyt.to URLs (case-insensitive)
-function extractAllVytCodes(obj) {
-    var results = new Set();
-    function recurse(v) {
-        if (!v) return;
-        if (typeof v === 'string') {
-            var re = /https?:\/\/vyt\.to\/[A-Za-z0-9_-]+/gi;
-            var matches = v.match(re);
-            if (matches) matches.forEach(function(m){ results.add(m.trim().toLowerCase()); });
-            return;
-        }
-        if (Array.isArray(v)) {
-            v.forEach(recurse); return;
-        }
-        if (typeof v === 'object') {
-            Object.values(v).forEach(recurse); return;
-        }
-    }
-    recurse(obj);
-    return Array.from(results);
-}
-
-// processJSONData: reads #jsonData textarea, extracts VYT codes, maps company/customer/dish if present,
-// detects duplicates within incoming batch (skips duplicates), moves prepared->active or creates new active.
-// then syncs to Firebase.
-window.processJSONData = function () {
+// ------------------- JSON IMPORT / PATCH (FIXED) -------------------
+window.processJSONData = async function () {
     try {
-        const raw = (document.getElementById("jsonData") && document.getElementById("jsonData").value) || "";
-        if (!raw) { showMessage("❌ Paste JSON first", "error"); return; }
-
-        let parsed;
-        try { parsed = JSON.parse(raw); } catch (e) {
-            console.error("JSON parse error:", e);
-            showMessage("❌ Invalid JSON format", "error");
+        const input = document.getElementById("jsonData").value.trim();
+        if (!input) {
+            showMessage("⚠️ Please paste JSON data first.", "warning");
             return;
         }
 
-        // Flatten containers into an array of objects to scan
-        var containers = [];
-        if (Array.isArray(parsed)) containers = parsed.slice();
-        else if (parsed.companies && Array.isArray(parsed.companies)) containers = parsed.companies.slice();
-        else if (parsed.boxes && Array.isArray(parsed.boxes)) containers = [{ boxes: parsed.boxes }];
-        else if (parsed.deliveries && Array.isArray(parsed.deliveries)) containers = parsed.deliveries.slice();
-        else containers = [parsed];
-
-        // collect all candidate codes from containers
-        var batchEntries = []; // { code, meta }
-        containers.forEach(function(cont){
-            // extract all vyt codes from container using recursive extractor
-            var codes = extractAllVytCodes(cont);
-            codes.forEach(function(c){
-                batchEntries.push({ code: c, meta: cont });
-            });
-
-            // also scan boxes/dishes explicitly if present
-            if (cont && Array.isArray(cont.boxes)) {
-                cont.boxes.forEach(function(box){
-                    var cb = extractAllVytCodes(box);
-                    cb.forEach(function(c){ batchEntries.push({ code: c, meta: { container: cont, box: box } }); });
-                    if (box.dishes && Array.isArray(box.dishes)) {
-                        box.dishes.forEach(function(d){
-                            var dd = extractAllVytCodes(d);
-                            dd.forEach(function(c){ batchEntries.push({ code: c, meta: { container: cont, dish: d } }); });
-                        });
-                    }
-                });
-            }
-        });
-
-        if (batchEntries.length === 0) {
-            showMessage("❌ No bowl codes found in JSON", "error");
+        const parsed = JSON.parse(input);
+        if (!Array.isArray(parsed)) {
+            showMessage("❌ JSON should be an array of bowls.", "error");
             return;
         }
 
-        // Detect duplicates in incoming batch (skip duplicates, do not abort)
-        var seen = new Set();
-        var filtered = [];
-        batchEntries.forEach(function(en){
-            var codeLower = (en.code || "").toLowerCase();
-            if (!codeLower) return;
-            if (seen.has(codeLower)) {
-                console.warn("⚠️ Duplicate skipped (same bowl found twice):", codeLower);
-                return;
+        const seen = new Set();
+        let imported = 0, skipped = 0, updated = 0;
+
+        for (const bowl of parsed) {
+            const code = (bowl.code || bowl.Code || bowl.bowlCode || bowl.id || "").trim().toLowerCase();
+            if (!code) continue;
+
+            // skip duplicate entries in same batch
+            if (seen.has(code)) {
+                console.warn("⚠️ Duplicate skipped (same bowl found twice):", code);
+                skipped++;
+                continue;
             }
-            seen.add(codeLower);
-            filtered.push(en);
-        });
+            seen.add(code);
 
-        // Process each code
-        var added = 0, updated = 0, moved = 0, ignored = 0;
-        var today = todayDateStr();
+            // try to find existing bowl
+            const idx = (window.appData.activeBowls || []).findIndex(
+                b => (b.code || "").toLowerCase() === code
+            );
 
-        filtered.forEach(function(entry){
-            var code = entry.code;
-            if (!code) { ignored++; return; }
+            // normalize incoming data — preserve original fields
+            const newBowl = {
+                code: bowl.code || bowl.Code || bowl.bowlCode || bowl.id || "",
+                dish: bowl.dish || bowl.Dish || bowl.dishLetter || "",
+                company: bowl.company || bowl.Company || bowl.companyName || bowl.org || "",
+                customer: bowl.customer || bowl.Customer || bowl.customerName || "",
+                creationDate: bowl.creationDate || bowl.CreationDate || bowl["Creation Date"] || bowl.date || "",
+                lastUpdate: nowISO()
+            };
 
-            // only accept vyt.to URLs (enforced)
-            if (!/https?:\/\/vyt\.to\/[A-Za-z0-9_-]+/i.test(code)) { ignored++; return; }
+            // if no creationDate in JSON, preserve existing or fallback to now
+            if (!newBowl.creationDate) {
+                if (idx >= 0 && window.appData.activeBowls[idx].creationDate)
+                    newBowl.creationDate = window.appData.activeBowls[idx].creationDate;
+                else
+                    newBowl.creationDate = nowISO();
+            }
 
-            // find in prepared
-            var preparedIndex = (window.appData.preparedBowls || []).findIndex(function(b){ return (b.code || "").toLowerCase() === code.toLowerCase(); });
-            if (preparedIndex !== -1) {
-                var pb = window.appData.preparedBowls.splice(preparedIndex, 1)[0];
-                var meta = entry.meta || {};
-                var company = (meta.company || meta.name || pb.company) || "Unknown";
-                var customer = ( (meta.dish && meta.dish.users && Array.isArray(meta.dish.users)) ? meta.dish.users.map(function(u){ return (u.username || u.name || u).toString(); }).join(", ") : (meta.box && meta.box.customer) ) || pb.customer || "Unknown";
-                var activeObj = {
-                    code: pb.code,
-                    dish: pb.dish || (meta.dish && meta.dish.label) || "",
-                    user: pb.user || "Unknown",
-                    company: company,
-                    customer: customer,
-                    creationDate: pb.timestamp || nowISO(),
-                    timestamp: nowISO(),
-                    status: "ACTIVE"
+            if (idx >= 0) {
+                // update existing bowl
+                window.appData.activeBowls[idx] = {
+                    ...window.appData.activeBowls[idx],
+                    ...newBowl
                 };
-                window.appData.activeBowls.push(activeObj);
-                moved++;
+                updated++;
             } else {
-                // if already active, update metadata if possible
-                var existing = (window.appData.activeBowls || []).find(function(b){ return (b.code || "").toLowerCase() === code.toLowerCase(); });
-                if (existing) {
-                    var meta2 = entry.meta || {};
-                    existing.company = existing.company || (meta2.container && (meta2.container.name || meta2.container.company)) || existing.company || "Unknown";
-                    existing.customer = existing.customer || ( (meta2.dish && meta2.dish.users && Array.isArray(meta2.dish.users)) ? meta2.dish.users.map(function(u){ return (u.username||u.name||u).toString(); }).join(", ") : existing.customer) || existing.customer || "Unknown";
-                    existing.timestamp = existing.timestamp || nowISO();
-                    updated++;
-                } else {
-                    var meta3 = entry.meta || {};
-                    var company3 = (meta3.container && (meta3.container.name || meta3.container.company)) || "Unknown";
-                    var customer3 = (meta3.dish && meta3.dish.users && Array.isArray(meta3.dish.users)) ? meta3.dish.users.map(function(u){ return (u.username||u.name||u).toString(); }).join(", ") : (meta3.box && meta3.box.customer) || "Unknown";
-                    var newActive = {
-                        code: code,
-                        dish: (meta3.dish && (meta3.dish.label || meta3.dish.name)) || "",
-                        user: "UNKNOWN",
-                        company: company3,
-                        customer: customer3,
-                        creationDate: today,
-                        timestamp: nowISO(),
-                        status: "ACTIVE"
-                    };
-                    window.appData.activeBowls.push(newActive);
-                    added++;
-                }
+                // add new bowl
+                window.appData.activeBowls.push(newBowl);
+                imported++;
             }
-        });
+        }
 
-        // persist & sync
-        saveToLocal();
-        pushFullToFirebase();
-        updateDisplay();
-        updateOvernightStats();
+        console.log(`✅ ${imported} new, ${updated} updated, ${skipped} skipped`);
+        showMessage(`✅ Imported ${imported} bowls (${updated} updated, ${skipped} skipped).`, "success");
 
-        var patchResultsEl = document.getElementById("patchResults");
-        var patchSummaryEl = document.getElementById("patchSummary");
-        var failedEl = document.getElementById("failedMatches");
-        if (patchResultsEl) patchResultsEl.style.display = "block";
-        if (patchSummaryEl) patchSummaryEl.textContent = "Moved: " + moved + " • Updated: " + updated + " • Created: " + added + " • Ignored: " + ignored;
-        if (failedEl) failedEl.innerHTML = "<em>Processing finished.</em>";
+        // Sync instantly to Firebase
+        syncToFirebase();
 
-        showMessage("✅ JSON processed: moved " + moved + " • created " + added + " • updated " + updated, "success");
     } catch (e) {
-        console.error("processJSONData:", e);
-        showMessage("❌ JSON parse or import error", "error");
+        console.error("processJSONData error:", e);
+        showMessage("❌ JSON processing failed. Check console.", "error");
     }
 };
+
 
 // reset today's prepared bowls
 window.resetTodaysPreparedBowls = function() {
