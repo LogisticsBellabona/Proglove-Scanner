@@ -592,113 +592,109 @@ function bindScannerInput() {
     } catch(e){ console.error("bindScannerInput:", e) }
 }
 
-// ------------------- EXPORTS (XLSX & ExcelJS) -------------------
-function exportToExcel(sheetName, dataArray, filename) {
-    if (!dataArray || dataArray.length === 0) {
-        showMessage("❌ No data to export.", "error");
-        return;
-    }
-
-    try {
-        const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.json_to_sheet(dataArray);
-        XLSX.utils.book_append_sheet(wb, ws, sheetName);
-        XLSX.writeFile(wb, filename);
-        showMessage(`✅ Exported ${filename} successfully.`, "success");
-    } catch (error) {
-        console.error("Excel export failed:", error);
-        showMessage("❌ Excel export failed.", "error");
-    }
+// ------------------- EXPORT ALL DATA (fixed mapping to match Berlin) -------------------
+const nonVytCount = rows.filter(r => !/https?:\/\/vyt\.to\//i.test(r["Code"])).length;
+if (nonVytCount > 0) {
+  console.warn(nonVytCount + " rows do not contain vyt links in 'Code' column. Exporting anyway.");
+  showMessage("⚠️ " + nonVytCount + " rows have non-VYT codes. Check console.", "warning");
 }
 
-window.exportActiveBowls = function () {
+window.exportAllData = function () {
     try {
         const bowls = window.appData.activeBowls || [];
-        if (bowls.length === 0) {
-            showMessage("❌ No active bowls to export", "error");
-            return;
-        }
-
-        const today = new Date();
-        const data = bowls.map((b) => {
-            const d = new Date(b.creationDate || today);
-            const missing = Math.ceil((today - d) / (1000 * 3600 * 24));
-            return {
-                "Bowl Code": b.code,
-                "Dish": b.dish,
-                "Company": b.company || "",
-                "Customer": b.customer || "",
-                "Creation Date": b.creationDate || "",
-                "Missing Days": missing + " days",
-            };
-        });
-
-        exportToExcel("Active Bowls", data, "Active_Bowls.xlsx");
-    } catch (e) {
-        console.error(e);
-        showMessage("❌ Export failed", "error");
-    }
-};
-
-window.exportReturnData = function () {
-    try {
-        const bowls = window.appData.returnedBowls || [];
-        if (bowls.length === 0) {
-            showMessage("❌ No returned bowls to export", "error");
-            return;
-        }
-
-        const today = new Date();
-        const data = bowls.map((b) => {
-            const d = new Date(b.returnDate || today);
-            const missing = Math.ceil((today - d) / (1000 * 3600 * 24));
-            return {
-                "Bowl Code": b.code,
-                "Dish": b.dish,
-                "Company": b.company || "",
-                "Customer": b.customer || "",
-                "Returned By": b.returnedBy || "",
-                "Return Date": b.returnDate || "",
-                "Return Time": b.returnTime || "",
-                "Missing Days": missing + " days",
-            };
-        });
-
-        exportToExcel("Returned Bowls", data, "Returned_Bowls.xlsx");
-    } catch (e) {
-        console.error(e);
-        showMessage("❌ Export failed", "error");
-    }
-};
-
-window.exportAllData = async function () {
-    try {
-        if (!window.appData.activeBowls || window.appData.activeBowls.length === 0) {
+        if (!bowls || bowls.length === 0) {
             showMessage("❌ No data to export.", "error");
             return;
         }
 
-        const allData = window.appData.activeBowls.map(b => {
-            const missingDays = b.creationDate
-                ? Math.ceil((Date.now() - new Date(b.creationDate)) / 86400000)
-                : "";
+        // helper: pick the best available 'code' field (prefer VYT code)
+        function pickCode(b) {
+            // often we use: code, Code, bowlCode, id, uid, uniqueIdentifier
+            let c = (b.code || b.Code || b.bowlCode || b.bowl_id || b.id || b.uid || b.uniqueIdentifier || "").toString();
+            if (!c) return "";
+            return c;
+        }
+
+        // helper: pick dish field
+        function pickDish(b) {
+            return (b.dish || b.Dish || b.dishLetter || b.dish_label || b.type || "") || "";
+        }
+
+        // helper: pick company
+        function pickCompany(b) {
+            return (b.company || b.Company || b.org || b.organization || b.companyName || "") || "";
+        }
+
+        // helper: pick customer
+        function pickCustomer(b) {
+            // customer can be array or string
+            if (Array.isArray(b.customer)) return b.customer.join(", ");
+            return (b.customer || b.Customer || b.customerName || b.customer_name || b.client || "") || "";
+        }
+
+        // helper: pick creation date from multiple possible keys, return YYYY-MM-DD or blank
+        function pickCreationDate(b) {
+            const candidates = [b.creationDate, b.creation_date, b.creation, b.CreationDate, b["Creation Date"], b.timestamp, b.createdAt, b.date, b.creationTimestamp];
+            for (let v of candidates) {
+                if (!v && v !== 0) continue;
+                try {
+                    // if already string in ISO or YYYY-MM-DD, try to parse
+                    let d = new Date(v);
+                    if (!isNaN(d.getTime())) {
+                        // format YYYY-MM-DD
+                        return d.toISOString().split("T")[0];
+                    }
+                } catch (e) { /* ignore */ }
+                // fallback: if it's already a string that looks like YYYY-MM-DD
+                if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return v.split("T")[0];
+            }
+            return "";
+        }
+
+        // helper: compute missing days between creationDate and today
+        function computeMissingDays(creationDateStr) {
+            try {
+                if (!creationDateStr) return "";
+                const cd = new Date(creationDateStr);
+                if (isNaN(cd.getTime())) return "";
+                const today = new Date();
+                const diff = Math.ceil((today - cd) / (1000 * 60 * 60 * 24));
+                return diff;
+            } catch (e) { return ""; }
+        }
+
+        // Build rows with Berlin-style headers precisely:
+        // Code, Dish, Company, Customer, Creation Date, Missing Days
+        const rows = bowls.map(b => {
+            const code = pickCode(b);
+            const dish = pickDish(b);
+            const company = pickCompany(b);
+            const customer = pickCustomer(b);
+            const creationDate = pickCreationDate(b);
+            const missingDays = computeMissingDays(creationDate);
             return {
-                Code: b.code,
-                Dish: b.dish || "",
-                Company: b.company || "",
-                Customer: b.customer || "",
-                CreationDate: b.creationDate || "",
-                MissingDays: missingDays,
+                "Code": code,
+                "Dish": dish,
+                "Company": company,
+                "Customer": customer,
+                "Creation Date": creationDate,
+                "Missing Days": missingDays
             };
         });
 
-        // Use XLSX for simplicity
-        exportToExcel("All Data", allData, "ProGlove_All_Data.xlsx");
+        // Use XLSX to export (keeps same header names)
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(rows, {header: ["Code","Dish","Company","Customer","Creation Date","Missing Days"]});
+        XLSX.utils.book_append_sheet(wb, ws, "All Data");
+        const filename = `ProGlove_All_Data_${new Date().toISOString().split("T")[0]}.xlsx`;
+        XLSX.writeFile(wb, filename);
+        showMessage("✅ Excel file exported successfully!", "success");
     } catch (err) {
-        console.error("❌ Excel export failed:", err);
-        showMessage("❌ Excel export failed. Check console for details.", "error");
+        console.error("❌ Export ALL failed:", err);
+        showMessage("❌ Excel export failed. See console.", "error");
     }
 };
+
 
 // ------------------- JSON / BATCH IMPORT -------------------
 // robust recursive extractor for vyt.to URLs (case-insensitive)
