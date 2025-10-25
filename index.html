@@ -8,13 +8,38 @@
 <title>ProGlove Bowl Tracker</title>
 
 <!-- ✅ Firebase SDKs (compat version for your code) -->
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
+
+<!-- Fonts -->
+ <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
 
-<!-- Fonts -->
+<!-- Initialize Firebase FIRST -->
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyDya1dDRSeQmuKnpraSoSoTjauLlJ_J94I",
+    authDomain: "proglove-bowl-tracker.firebaseapp.com",
+    databaseURL: "https://proglove-bowl-tracker-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "proglove-bowl-tracker",
+    storageBucket: "proglove-bowl-tracker.firebasestorage.app",
+    messagingSenderId: "280001054969",
+    appId: "1:280001054969:web:a0792a228ea2f1c5c9ba28"
+  };
+
+  // ✅ This line fixes your error
+  firebase.initializeApp(firebaseConfig);
+
+  console.log("✅ Firebase initialized manually before app-logic.js");
+</script>
+
+  <!-- Fonts -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
@@ -182,7 +207,7 @@ body{margin:0;font-family:'Inter',sans-serif;background:var(--bg-dark);color:var
 </div>
 
 <!-- Application script (app-logic.js is below) -->
-  <script src="app-logic.js?v=2025102006"></script>
+ <script src="app-logic.js"></script>
 <script src="app-logic.js"></script>
 </head>
 <body>
