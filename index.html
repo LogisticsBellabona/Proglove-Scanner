@@ -5,208 +5,154 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ProGlove Bowl Tracking System</title>
 
-<!-- Firebase compat SDKs -->
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
-
-<!-- Excel / export libs -->
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<!-- Excel Libraries -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
 
 <!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
 
+<!-- Tailwind CSS for styling -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- Custom Styles & Base -->
 <style>
-:root{
---bg-dark:#0f1724;
---card:#273041;
---card-light:#37475a;
---text:#f3f4f6;
---muted:#a0aec0;
---border:#4a5568;
---accent-pink:#ff6e96;
---accent-green:#00e0b3;
---accent-red:#ff5252;
-}
-*{box-sizing:border-box}
-body{margin:0;font-family:'Inter',sans-serif;background:var(--bg-dark);color:var(--text);-webkit-font-smoothing:antialiased;}
-.container{max-width:980px;margin:0 auto;padding:18px;}
-.app-header{background:var(--card);border-radius:12px;padding:20px 18px;margin-bottom:16px;position:relative;border-bottom:4px solid var(--accent-pink)}
-.header-title{color:var(--accent-pink);font-weight:800;font-size:20px;margin:0}
-.header-sub{color:var(--muted);margin-top:6px}
-#systemStatus{position:absolute;right:16px;top:16px;padding:6px 10px;border-radius:8px;background:#6b7280;color:#fff;font-weight:700;font-size:13px}
-.app-card{background:var(--card);border-radius:10px;padding:16px;margin-bottom:14px;border:1px solid var(--border)}
-.section-title{font-weight:600;color:var(--text);font-size:16px;border-bottom:1px solid var(--border);padding-bottom:8px;margin-bottom:12px}
-.flex-row{display:flex;gap:10px;flex-wrap:wrap}
-.flex-1{flex:1 1 0%}
-.mode-button{flex:1;padding:10px 14px;border-radius:8px;border:none;cursor:pointer;font-weight:700;color:#fff;background:var(--card-light)}
-.mode-button:disabled{opacity:.5;cursor:not-allowed}
-.btn-pill{border-radius:999px;padding:10px 18px}
-.btn-green{background:var(--accent-green);color:#05201a}
-.btn-red{background:var(--accent-red);color:#391010}
-.input,select,textarea{width:100%;padding:10px;border-radius:8px;background:transparent;border:1px solid var(--border);color:var(--text);font-size:14px}
-.scanner-input{font-size:16px;text-align:center;border-width:3px}
-.metrics-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:12px}
-.metric{background:var(--card-light);padding:10px;border-radius:8px;text-align:center}
-.metric .value{font-size:20px;font-weight:800}
-.metric .label{color:var(--muted);font-size:12px}
-.table-wrap{overflow:auto;margin-top:12px;border-radius:8px}
-.data-table{width:100%;border-collapse:collapse;font-size:14px}
-.data-table th{background:var(--card-light);color:var(--accent-pink);padding:8px;text-align:left;border-bottom:1px solid var(--border)}
-.data-table td{padding:8px;border-bottom:1px solid rgba(0,0,0,0.2)}
-.message-container{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;pointer-events:none;max-width:600px}
-.small-note{color:var(--muted);font-size:13px;margin-top:8px}
-.footer{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}
-.data-list{background:var(--card-light);padding:10px;border-radius:8px;max-height:360px;overflow:auto}
-.data-item{padding:8px;border-bottom:1px solid rgba(0,0,0,0.15);display:flex;justify-content:space-between;align-items:center}
-.data-item:last-child{border-bottom:none}
+  body { 
+    font-family: 'Inter', sans-serif; 
+    background-color: #0f172a; /* Corresponds to Tailwind's slate-900 */
+    color: #f1f5f9; /* slate-100 */
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Custom animation for messages */
+  @keyframes fade-in-down {
+      0% {
+          opacity: 0;
+          transform: translateY(-10px);
+      }
+      100% {
+          opacity: 1;
+          transform: translateY(0);
+      }
+  }
+  .animate-fade-in-down {
+      animation: fade-in-down 0.3s ease-out forwards;
+  }
 </style>
-
-<!-- Initialize Firebase (Munich / confirmed DB URL) -->
-<script>
-  // IMPORTANT: This initializes Firebase before app-logic.js loads.
-  (function() {
-    try {
-      var cfg = {
-        apiKey: "AIzaSyDya1dDRSeQmuKnpraSoSoTjauLlJ_J94I",
-        authDomain: "proglove-bowl-tracker.firebaseapp.com",
-        databaseURL: "https://proglove-bowl-tracker-default-rtdb.europe-west1.firebasedatabase.app",
-        projectId: "proglove-bowl-tracker",
-        storageBucket: "proglove-bowl-tracker.firebasestorage.app",
-        messagingSenderId: "280001054969",
-        appId: "1:280001054969:web:a0792a228ea2f1c5c9ba28"
-      };
-      if (!window.firebase) {
-        console.error("❌ Firebase SDK not present! Check script includes.");
-        return;
-      }
-      if (!firebase.apps || firebase.apps.length === 0) {
-        firebase.initializeApp(cfg);
-        console.log("✅ Firebase initialized:", cfg.projectId);
-      } else {
-        console.log("ℹ️ Firebase already initialized:", (firebase.apps[0] && firebase.apps[0].options && firebase.apps[0].options.projectId) || firebase.apps[0].name);
-      }
-    } catch (e) {
-      console.error("❌ Firebase init error:", e);
-    }
-  })();
-</script>
 </head>
-
 <body>
-<div class="message-container" id="messageContainer"></div>
-
-<div class="container">
-  <header class="app-header">
-    <div class="header-title">🧤 PROGLOVE BOWL TRACKING</div>
-    <div class="header-sub">Real-time Prep & Return Synchronization</div>
-    <div id="systemStatus">Initializing...</div>
-  </header>
-
-  <!-- Mode -->
-  <section class="app-card" id="modeSection">
-    <div class="section-title">1. Select Operation Mode</div>
-    <div class="flex-row">
-      <button id="kitchenBtn" class="mode-button" onclick="setMode('kitchen')">🍳 KITCHEN PREP</button>
-      <button id="returnBtn" class="mode-button" onclick="setMode('return')">🔄 RETURN SCAN</button>
-    </div>
-    <div id="modeDisplay" class="small-note">Status: Please select a mode</div>
-  </section>
-
-  <!-- User & Dish selection -->
-  <section class="app-card" id="userSection">
-    <div class="section-title">2. Select User & Dish</div>
-    <div class="flex-row">
-      <div class="flex-1">
-        <label class="small-note">User</label>
-        <select id="userSelect" class="input" onchange="selectUser()">
-          <option value="">-- Select User --</option>
-        </select>
+  <div id="messageContainer" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-md px-4 space-y-2"></div>
+  <div class="container max-w-4xl mx-auto p-4">
+    <header class="bg-slate-800 rounded-xl p-5 mb-4 relative border-b-4 border-pink-500 shadow-lg">
+      <h1 class="text-xl font-extrabold text-pink-500 tracking-wider">🧤 PROGLOVE BOWL TRACKING</h1>
+      <p class="text-slate-400 mt-1">Real-time Prep & Return Synchronization</p>
+      <div id="systemStatus" class="absolute right-4 top-4 px-3 py-1 rounded-full text-xs font-bold text-white bg-gray-600">
+        INITIALIZING...
       </div>
-      <div class="flex-1" id="dishWrapper" style="display:none">
-        <label class="small-note">Dish Letter (A-Z / 1-4)</label>
-        <select id="dishSelect" class="input" onchange="selectDishLetter()">
-          <option value="">-- Select Dish --</option>
-        </select>
+    </header>
+
+    <section class="bg-slate-800 border border-slate-700 rounded-lg p-4 mb-4 shadow-md">
+      <h2 class="text-base font-semibold text-slate-200 border-b border-slate-700 pb-2 mb-4">1. Select Operation Mode</h2>
+      <div class="flex gap-4">
+        <button id="kitchenModeBtn" class="flex-1 p-3 rounded-lg font-bold text-white transition-all duration-200 bg-slate-700 hover:bg-slate-600">
+          🍳 KITCHEN PREP
+        </button>
+        <button id="returnModeBtn" class="flex-1 p-3 rounded-lg font-bold text-white transition-all duration-200 bg-slate-700 hover:bg-slate-600">
+          🔄 RETURN SCAN
+        </button>
       </div>
-    </div>
-  </section>
+      <p class="text-sm text-slate-400 mt-3">Status: <span id="modeStatus">Please select a mode</span></p>
+    </section>
 
-  <!-- Scanner -->
-  <section class="app-card" id="scannerSection">
-    <div class="section-title">3. Scanner Input</div>
-    <div class="flex-row">
-      <button id="startBtn" class="mode-button btn-pill btn-green" onclick="startScanning()" disabled>▶ START SCANNER</button>
-      <button id="stopBtn" class="mode-button btn-pill btn-red" onclick="stopScanning()" disabled>⏹ STOP SCANNER</button>
-    </div>
-
-    <div style="margin-top:12px">
-      <input id="scanInput" class="input scanner-input" placeholder="Select user and press START..." disabled autocomplete="off" />
-    </div>
-
-    <div class="metrics-grid" style="margin-top:12px">
-      <div class="metric">
-        <div class="label">User Scans (<span id="myDishLetter">--</span>)</div>
-        <div id="myScansCount" class="value">0</div>
+    <section class="bg-slate-800 border border-slate-700 rounded-lg p-4 mb-4 shadow-md">
+      <h2 class="text-base font-semibold text-slate-200 border-b border-slate-700 pb-2 mb-4">2. Select User & Dish</h2>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div>
+          <label for="userSelect" class="block text-sm font-medium text-slate-300 mb-1">User</label>
+          <select id="userSelect" class="w-full bg-slate-900 border border-slate-600 rounded-md p-2 focus:ring-2 focus:ring-pink-500 focus:outline-none">
+            <option value="">-- Select Mode First --</option>
+          </select>
+        </div>
+        <div id="dishSelectorContainer" style="display: none;">
+          <label for="dishSelect" class="block text-sm font-medium text-slate-300 mb-1">Dish Letter</label>
+          <select id="dishSelect" class="w-full bg-slate-900 border border-slate-600 rounded-md p-2 focus:ring-2 focus:ring-pink-500 focus:outline-none">
+            <option value="">-- Select Dish --</option>
+          </select>
+        </div>
       </div>
-      <div class="metric">
-        <div class="label" id="prepLabel">Prepared Today</div>
-        <div id="preparedTodayCount" class="value">0</div>
+    </section>
+
+    <section class="bg-slate-800 border border-slate-700 rounded-lg p-4 mb-4 shadow-md">
+      <h2 class="text-base font-semibold text-slate-200 border-b border-slate-700 pb-2 mb-4">3. Scan Bowls</h2>
+      <div class="flex items-center gap-4">
+        <button id="startScanBtn" class="flex-1 p-3 rounded-lg font-bold text-white bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-600 disabled:cursor-not-allowed">
+          ▶️ START SCAN
+        </button>
+        <button id="stopScanBtn" class="flex-1 p-3 rounded-lg font-bold text-white bg-red-600 hover:bg-red-500 disabled:bg-slate-600 disabled:cursor-not-allowed">
+          ⏹️ STOP SCAN
+        </button>
       </div>
-      <div class="metric">
-        <div class="label">Active (Out)</div>
-        <div id="activeCount" class="value">0</div>
+      <input type="text" id="scanInput" placeholder="Select user/dish first..." disabled
+        class="mt-4 w-full bg-slate-900 p-3 text-lg text-center font-mono rounded-md border-2 border-slate-600 focus:border-pink-500 focus:ring-pink-500 focus:outline-none transition" />
+    </section>
+
+    <section class="grid md:grid-cols-2 gap-4">
+      <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 shadow-md">
+        <h2 class="text-base font-semibold text-slate-200 mb-3">📈 My Scans (Today)</h2>
+        <p class="text-5xl font-mono font-extrabold text-pink-500" id="myScansCount">0</p>
+        <p class="text-slate-400">for dish <span class="font-bold text-slate-200" id="myScansDish">--</span></p>
       </div>
-      <div class="metric">
-        <div class="label">Returned Today</div>
-        <div id="returnedCount" class="value">0</div>
+       <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 shadow-md">
+        <h2 class="text-base font-semibold text-slate-200 mb-3">📊 Daily Stats</h2>
+        <div class="space-y-2 text-sm">
+          <p class="flex justify-between"><span>Prepared Today:</span> <span id="preparedTodayCount" class="font-bold">0</span></p>
+          <p class="flex justify-between"><span>Active Bowls:</span> <span id="activeCount" class="font-bold">0</span></p>
+          <p class="flex justify-between"><span>Returned Today:</span> <span id="returnedTodayCount" class="font-bold">0</span></p>
+        </div>
       </div>
-    </div>
-  </section>
+    </section>
+    
+    <section class="bg-slate-800 border border-slate-700 rounded-lg p-4 mt-4 shadow-md">
+      <h2 class="text-base font-semibold text-slate-200 mb-3">Live Prep Report (Today)</h2>
+      <div class="overflow-y-auto max-h-60">
+        <table class="w-full text-sm text-left">
+          <thead class="sticky top-0 bg-slate-800">
+            <tr class="border-b border-slate-600">
+              <th class="p-2">Dish</th><th class="p-2">User</th><th class="p-2">Count</th>
+            </tr>
+          </thead>
+          <tbody id="livePrepReportBody">
+            <tr><td colspan="3" class="p-4 text-center text-slate-400">No bowls prepared today.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
-  <!-- Live Report -->
-  <section class="app-card">
-    <div class="section-title">Live Prep Report (10 PM Cycle)</div>
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead>
-          <tr><th>Dish</th><th>User</th><th>Count</th></tr>
-        </thead>
-        <tbody id="livePrepReportBody">
-          <tr><td colspan="3" style="text-align:center;color:#9aa3b2;padding:18px">No kitchen scans recorded during this cycle.</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
+     <section class="bg-slate-800 border border-slate-700 rounded-lg p-4 mt-4 shadow-md">
+      <h2 class="text-base font-semibold text-slate-200 mb-3">🛠️ Data Management</h2>
+      <div class="grid md:grid-cols-3 gap-4 mb-4">
+        <button id="exportActiveBtn" class="p-2 rounded-lg text-sm font-bold bg-sky-600 hover:bg-sky-500">Export Active</button>
+        <button id="exportReturnsBtn" class="p-2 rounded-lg text-sm font-bold bg-sky-600 hover:bg-sky-500">Export Returns</button>
+        <button id="exportAllBtn" class="p-2 rounded-lg text-sm font-bold bg-pink-600 hover:bg-pink-500">Export All Data</button>
+      </div>
+      <p class="text-xs text-slate-400 mb-3">Last Firebase Sync: <span id="lastSyncInfo">N/A</span></p>
+      
+      <div class="border-t border-slate-700 pt-4">
+        <h3 class="text-sm font-semibold text-amber-400 mb-2">Patch Customer Data</h3>
+        <textarea id="jsonInput" rows="3" placeholder='Paste JSON array here, e.g., [{"bowl_id": "...", "customer_name": "...", "company": "..."}]' class="w-full bg-slate-900 p-2 rounded-md text-xs font-mono border border-slate-600"></textarea>
+        <button id="patchJsonBtn" class="mt-2 w-full p-2 text-sm font-bold rounded-lg bg-amber-600 hover:bg-amber-500">Apply JSON Patch</button>
+        <div id="patchResultContainer" style="display:none;" class="mt-2 p-2 rounded text-xs"></div>
+      </div>
 
-  <!-- Data Management -->
-  <section class="app-card">
-    <div class="section-title">Data Management & Export</div>
-    <div id="lastSyncInfo" class="small-note">Awaiting sync...</div>
-    <div style="margin-top:10px" class="flex-row">
-      <button class="mode-button" onclick="exportActiveBowls()">📥 Export Active Bowls</button>
-      <button class="mode-button" onclick="exportReturnData()">📥 Export Returns</button>
-      <button class="mode-button" onclick="exportAllData()">📊 Export ALL</button>
-    </div>
-
-    <h4 style="margin-top:12px;color:var(--muted)">JSON Import (Customer Data Patch)</h4>
-    <textarea id="jsonData" class="input" style="height:120px" placeholder='Paste JSON here...'></textarea>
-    <div class="flex-row" style="margin-top:8px">
-      <button class="mode-button" onclick="processJSONData()">🔄 Patch Customer Data</button>
-      <button class="mode-button" onclick="resetTodaysPreparedBowls()">🗑️ Reset Prepared/Scans</button>
-    </div>
-
-    <div id="patchResults" style="display:none;margin-top:12px;background:var(--card-light);padding:10px;border-radius:8px">
-      <div id="patchSummary" style="font-weight:700"></div>
-      <div id="failedMatches" style="margin-top:8px;color:var(--muted)"></div>
-    </div>
-  </section>
-
-  <div class="footer">© 2025 Berlin Kitchen</div>
-</div>
-
-<!-- Load app logic (this file is included below in full separately) -->
-<script src="app-logic.js"></script>
+       <div class="border-t border-slate-700 pt-4 mt-4">
+         <h3 class="text-sm font-semibold text-red-400 mb-2">Danger Zone</h3>
+         <button id="resetPreparedBtn" class="w-full p-2 text-sm font-bold rounded-lg bg-red-800 hover:bg-red-700">Reset Today's Prep Data</button>
+       </div>
+    </section>
+  </div>
 </body>
 </html>
