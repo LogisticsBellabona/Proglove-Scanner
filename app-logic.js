@@ -17,12 +17,12 @@ const appState = {
 };
 
 const USERS = [
-    {name: "Hamid", role: "Kitchen"}, {name: "Richa", role: "Kitchen"},
-    {name: "Jash", role: "Kitchen"}, {name: "Joes", role: "Kitchen"},
+    {name: "Hamid", role: "Kitchen"}, {name: "Ali", role: "Kitchen"},
+    {name: "Jash", role: "Kitchen"}, {name: "Rafi", role: "Kitchen"},
     {name: "Mary", role: "Kitchen"}, {name: "Rushal", role: "Kitchen"},
-    {name: "Sreekanth", role: "Kitchen"}, {name: "Sultan", role: "Return"},
-    {name: "Riyaz", role: "Return"}, {name: "Alan", role: "Return"},
-    {name: "Adesh", role: "Return"}
+    {name: "Sreekanth", role: "Kitchen"}, {name: "Ali", role: "Return"},
+    {name: "Rafi", role: "Return"}, {name: "Said", role: "Return"},
+    {name: "Mazher", role: "Return"}
 ];
 
 const FIREBASE_CONFIG = {
